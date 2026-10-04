@@ -32,13 +32,13 @@
 ## Getting Started
 
 ### Prerequisites
-* **Nothing to install by hand.** `setup.bat` (Windows) or `python setup_env.py` fetches a pinned **Python 3.13** via [uv](https://docs.astral.sh/uv/), installs every dependency, and supplies `ffmpeg`/`ffprobe` itself — no admin rights, no manual ffmpeg, no libmagic.
+* **Almost nothing to install by hand.** `setup.bat` (Windows) or `python setup_env.py` fetches a pinned **Python 3.13** via [uv](https://docs.astral.sh/uv/), installs every dependency, and supplies `ffmpeg`/`ffprobe` itself — no admin rights, no manual ffmpeg, no libmagic. Note the bootstrap itself needs a Python 3.8+ interpreter already on your machine; the Python 3.13 it installs is for the app.
 * Anki with [AnkiConnect](https://ankiweb.net/shared/info/2055492159) addon installed and enabled
 * An OpenAI API key or compatible LLM service
 * *(optional)* The tesseract OCR engine, only if you want the OCR/image features
 
 ### Quick Installation
-**Windows:** double-click **`setup.bat`**. It finds a Python interpreter, builds the environment, then offers to launch the app.
+**Windows:** double-click **`setup.bat`**. It finds a Python interpreter, builds the environment, then offers to launch the app. Later on, just double-click **`run.bat`** to start it.
 
 **Any platform with Python 3.8+:**
 ```bash
@@ -47,7 +47,7 @@ cd Voice2Anki
 python setup_env.py
 ```
 
-Either way you get an isolated `.venv/` pinned to Python 3.13. The script is idempotent — re-run it after a `git pull` to apply dependency changes, add `--recreate` to rebuild from scratch, or run `python setup_env.py --check` for a component-by-component status report. Prefer your own venv? `pip install -r requirements.txt` still works, but then install `ffmpeg` yourself.
+Either way you get an isolated `.venv/` pinned to Python 3.13, with dependency versions locked in `uv.lock` — so installs are reproducible. The script is idempotent — re-run it after a `git pull` to apply dependency changes, add `--recreate` to rebuild from scratch, or run `python setup_env.py --check` for a component-by-component status report. Prefer your own venv? `pip install -r requirements.txt` still works, but then install `ffmpeg` yourself.
 
 #### How ffmpeg is provided
 pydub needs `ffmpeg` **and** `ffprobe` and offers no environment-variable override — it scans `PATH` once, at import time. So `utils/__init__.py` calls `utils/ffmpeg_bootstrap.py` before anything imports pydub. That helper prefers a system ffmpeg when you have one, and otherwise appends the static binaries from the [`static-ffmpeg`](https://pypi.org/project/static-ffmpeg/) package (downloaded into `.venv/`, no admin needed). Because ordering matters, standalone scripts run from inside `utils/` import the bootstrap directly.
@@ -61,23 +61,32 @@ Tesseract is a separate C++ program, so it is the one thing that cannot be pip-i
 
 ### Running Voice2Anki
 1. Start Anki and ensure AnkiConnect is enabled
-2. Activate the environment, then launch:
+2. Launch it:
    ```bash
-   # Windows PowerShell
-   .venv\Scripts\Activate.ps1
-   # macOS / Linux
-   source .venv/bin/activate
+   # Windows: just double-click this
+   run.bat
 
-   python Voice2Anki.py
+   # or, any platform, from a shell
+   .venv\Scripts\python.exe Voice2Anki.py    # Windows
+   .venv/bin/python Voice2Anki.py            # macOS / Linux
    ```
-   (You can also skip activating and call `.venv/bin/python Voice2Anki.py` / `.venv\Scripts\python.exe Voice2Anki.py` directly.)
-   
+   You can also activate the environment first (`.venv\Scripts\Activate.ps1` on Windows, `source .venv/bin/activate` elsewhere) and then run `python Voice2Anki.py`.
+
+   The page opens in your browser automatically. The console prints the exact URL to visit, by default `http://127.0.0.1:7860`.
+
 ### Key Launch Options
-* `--open_browser`: Automatically opens your default browser
-* `--authentication`: Enables secure login (edit credentials in Voice2Anki.py)
-* `--localnetwork`: Makes interface available on your local network via `https://[LOCAL_IP]:7860`
-* `--debug`: Increases logging verbosity for troubleshooting
-* `--share`: Creates a temporary public URL (72h) via Hugging Face (**use with caution**)
+By default Voice2Anki runs **only on localhost** (`http://127.0.0.1:7860`), with **no login prompt**, and opens your browser for you.
+
+* `--port 8000`: serve on a different port
+* `--localnetwork`: also expose the interface to your local network, e.g. `http://[LOCAL_IP]:7860` from your phone. Plain HTTP, so traffic is **not** encrypted — only use this on a network you trust
+* `--authentication`: require the login/password pairs hardcoded in `Voice2Anki.py` (currently `v2a` / `v2a` — change them there). Automatically forced on by `--share`
+* `--open_browser=False`: don't open a browser on startup
+* `--debug`: increases logging verbosity for troubleshooting
+* `--share`: creates a temporary public URL (72h) via Hugging Face (**use with caution**)
+
+To turn a flag **off**, pass `--name=False`. Note that `--no-name` does **not** work and will either crash or be silently ignored.
+
+Use `run.bat` as a shortcut on Windows, e.g. `run.bat --port 8000`.
 
 View all options with:
 ```bash
@@ -85,10 +94,10 @@ python Voice2Anki.py --help
 ```
 
 ### First-Time Setup
-1. Open your browser to the URL shown in the console output
+1. Your browser opens automatically once the server is ready; the console also prints the URL
 2. Enter a profile name in the `profile` field (this loads default settings)
 3. Configure your API key in the settings
-4. Pick an LLM in the `LLM` dropdown on the `Memories & Buffer` tab
+4. Pick an LLM in the `LLM` dropdown on the `Memories & Buffer` tab — the built-in default is a placeholder entry, so cards cannot be generated until you choose a real model
 
 ### Optional Anki Syncing
 Syncing is entirely optional and Voice2Anki starts fine without it.
@@ -99,7 +108,7 @@ Syncing is entirely optional and Voice2Anki starts fine without it.
 ## Important Notes
 
 ### Security & Performance
-* **SSL Certificates**: Self-signed certificates require browser security exceptions
+* **SSL**: only relevant with `--localnetwork`. Voice2Anki looks for a certificate pair in `utils/ssl/` (`key.pem` and `cert.pem`) and uses HTTPS if both are present; otherwise it serves plain HTTP. Self-signed certificates require a browser security exception
 * **Browser Compatibility**: Chromium-based browsers show better CPU performance than Firefox
 * **Updates**: Simply run `git pull` to get the latest version
 
