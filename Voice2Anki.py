@@ -27,10 +27,10 @@ def start_Voice2Anki(
 
     gui: bool = True,
     share: bool = False,
-    open_browser: bool = False,
+    open_browser: bool = True,
     debug: bool = False,
-    authentication: bool = True,
-    localnetwork: bool = True,
+    authentication: bool = False,
+    localnetwork: bool = False,
     use_ssl: bool = True,
     anki_media_folder: Optional[Union[str, PosixPath]] = None,
     disable_tracing: bool = False,
@@ -55,15 +55,16 @@ def start_Voice2Anki(
         False to use cli
     share: bool, default False
         will create a url reachable from the global internet
-    open_browser: bool, default False
+    open_browser: bool, default True
         automatically open the browser
     debug: bool, default False
         increase verbosity, also open the debugger in case of issue
-    authentication: bool, default True
+    authentication: bool, default False
         if True, will use the login/password pairs specified in Voice2Anki.py
         This if forced to True if share is True
-    localnetwork: bool, default True
-        restrict access to the local network only
+    localnetwork: bool, default False
+        restrict access to the local network only. Default False means the app
+        is only reachable from this machine, via http://127.0.0.1:<port>
     use_ssl: bool, default True
         if True, will use the ssl configuration specified in Voice2Anki.py
         Disable if share is used as self signed certificate mess with it.
@@ -169,13 +170,38 @@ def start_Voice2Anki(
                 "ssl_keyfile_password": "fd5d63390f1a45427acfe20dd0e24a95",  # random md5
                 "ssl_verify": False,  # allow self signed
                 }
+        yel("Using SSL from utils/ssl (self-signed certificate)")
+    elif localnetwork and not share:
+        yel("Will not use SSL - no certificate found in utils/ssl.")
+        yel("Traffic on the local network will NOT be encrypted.")
     else:
-        red("Will not use SSL")
         ssl_args = {}
 
     if gui:
         whi("Launching GUI")
-        from utils.gui import demo
+        from utils.gui import demo, theme, css, html_head
+
+        local_url = f"http://127.0.0.1:{port}"
+        if share:
+            url_hint = "Voice2Anki will print a public share URL below - open that one."
+        elif localnetwork:
+            url_hint = local_url + "\n   It is also reachable from other devices at http://[THIS_MACHINE_IP]:" + str(port)
+        else:
+            url_hint = local_url
+        scheme = "https" if ssl_args else "http"
+        if not share:
+            local_url = f"{scheme}://127.0.0.1:{port}"
+            if not localnetwork:
+                url_hint = local_url
+        whi("\n" + "=" * 62)
+        whi("  Voice2Anki is starting up.")
+        whi("  When it is ready, open this page in your browser:")
+        whi(f"\n      {url_hint}\n")
+        if not localnetwork and not share:
+            whi("  (localhost only - not reachable from other devices on your network)")
+        elif share:
+            whi("  (this link is public - anyone with it can reach your Voice2Anki)")
+        whi("=" * 62 + "\n")
 
         # queueing seems to make things way slower
         # demo.queue()
@@ -188,7 +214,9 @@ def start_Voice2Anki(
                 # prevent_thread_lock=True if debug else False,
                 max_threads=5,  # if not debug else 1,  # default 40
                 show_error=True,
-                show_api=False,
+                theme=theme,
+                css=css,
+                head=html_head,
                 server_name=server,
                 server_port=port,
                 # inline=True,
@@ -214,5 +242,10 @@ def start_Voice2Anki(
 if __name__ == "__main__":
     try:
         demo = fire.Fire(start_Voice2Anki)
-    except IndexError as e:
-        print(f"Quitting ('{e}'))")
+    except KeyboardInterrupt:
+        whi("Stopping Voice2Anki.")
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)

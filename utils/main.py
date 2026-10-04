@@ -25,7 +25,7 @@ from pydub import AudioSegment
 
 import litellm
 import openai
-from deepgram import DeepgramClient, PrerecordedOptions
+from deepgram import DeepgramClient
 
 from .anki_utils import add_note_to_anki, add_audio_to_anki
 from .shared_module import shared
@@ -38,6 +38,31 @@ from .typechecker import optional_typecheck
 litellm.set_verbose = False  #shared.debug
 shared.pv = ValueStorage()
 shared.message_buffer = shared.pv["message_buffer"]
+
+
+def resolve_llm_info(model: str) -> dict:
+    """Return litellm's info/pricing dict for `model`, tolerating a
+    'provider/model' prefix. Raises a readable error instead of KeyError or
+    IndexError so an unset or unknown LLM can't crash the app with a
+    traceback."""
+    if not shared.llm_info:
+        raise ValueError(
+            "No LLM information is available. litellm returned an empty model "
+            "list, so Voice2Anki can't tell which models exist or what they cost.")
+    if not model:
+        raise ValueError(
+            "No LLM selected. Pick one in the LLM dropdown on the "
+            "'Memories & Buffer' tab before generating cards.")
+    if model in shared.llm_info:
+        return shared.llm_info[model]
+    if "/" in model:
+        bare = model.split("/", 1)[1]
+        if bare in shared.llm_info:
+            return shared.llm_info[bare]
+    raise ValueError(
+        f"LLM '{model}' is not listed in litellm's model info, so Voice2Anki "
+        "can't check its token limit or estimate its cost. Pick a model from "
+        "the LLM dropdown on the 'Memories & Buffer' tab.")
 
 d = datetime.today()
 today = f"{d.day:02d}/{d.month:02d}/{d.year:04d}"
@@ -176,14 +201,13 @@ def whisper_cached(
                             while deepgram_clients:
                                 k = next(deepgram_clients.keys())
                                 del deepgram_clients[k]
-                            deepgram_clients[os.environ["DEEPGRAM_API_TOKEN"]] = DeepgramClient()
+                            deepgram_clients[os.environ["DEEPGRAM_API_TOKEN"]] = DeepgramClient(api_key=os.environ["DEEPGRAM_API_TOKEN"])
                         assert len(deepgram_clients) == 1, f"found multiple deepgram_client: {deepgram_clients}"
                         client = deepgram_clients[os.environ["DEEPGRAM_API_TOKEN"]]
                         if shared.pv["txt_deepgram_keyword_boosting"]:
                             keywords = shared.pv["txt_deepgram_keyword_boosting"].strip().splitlines()
                         else:
                             keywords = None
-                        keywords="&keywords=".join(shared.pv["txt_deepgram_keyword_boosting"])
                         # set options
                         options = dict(
                             # docs: https://playground.deepgram.com/?endpoint=listen&smart_format=true&language=en&model=nova-2
@@ -201,7 +225,6 @@ def whisper_cached(
                             diarize=False,
                             # dictation=False,
                             detect_entities=False,
-                            detect_topics=False,
                             keywords=keywords,
                             numerals=True,
                         )
@@ -218,12 +241,10 @@ def whisper_cached(
                                 )
                             )
 
-                        options = PrerecordedOptions(**options)
-                        payload = {"buffer": audio_file.read()}
-                        transcript = client.listen.prerecorded.v("1").transcribe_file(
-                            payload,
-                            options,
-                        ).to_dict()
+                        transcript = client.listen.v1.media.transcribe_file(
+                            request=audio_file.read(),
+                            **options,
+                        ).model_dump()
                         assert isinstance(transcript, dict), f"transcript is not dict but {transcript}"
                         assert len(transcript["results"]["channels"]) == 1, "unexpected deepgram output"
                         assert len(transcript["results"]["channels"][0]["alternatives"]) == 1, "unexpected deepgram output"
@@ -647,12 +668,7 @@ Here are examples of input (me) and appropriate outputs (you):
 
     yel(f"Number of messages that will be sent to ChatGPT: {len(formatted_messages)} (representing {tkns} tokens)")
 
-    if shared.pv['llm_choice'] in shared.llm_info:
-        modelinfo = litellm.model_cost[shared.pv['llm_choice']]
-    elif shared.pv['llm_choice'].split("/", 1)[1] in shared.llm_info:
-        modelinfo = litellm.model_cost[shared.pv['llm_choice'].split("/", 1)[1]]
-    else:
-        raise ValueError(f"Couldn't find model info about '{shared.pv['llm_choice']}' in litellm")
+    modelinfo = resolve_llm_info(shared.pv['llm_choice'])
     if "max_input_tokens" in modelinfo:
         input_token_limit = modelinfo["max_input_tokens"]
     elif "max_tokens" in modelinfo:
@@ -789,7 +805,7 @@ def alfred(
         if dupli:
             raise Exception(f"{len(dupli)} duplicate prompts found: {dupli}:" + "\n* " + "\n* ".join(list(set(dupli))))
 
-    model_price = shared.llm_info[llm_choice]
+    model_price = resolve_llm_info(llm_choice)
     whi(f"Will use model {llm_choice}")
 
     # pprint("Prompt for LLM:")
@@ -1171,7 +1187,7 @@ def audio_edit(
 
     #model_to_use = "openai/gpt-4o"
     model_to_use = shared.pv["llm_choice"]
-    model_price = shared.llm_info[model_to_use]
+    model_price = resolve_llm_info(model_to_use)
 
     whi(f"Editing via {model_to_use}:")
     whi(prompt)
@@ -1353,7 +1369,7 @@ def to_anki(
 
     if "alfred" in clozetext.lower():
         raise Exception(red(f"COMMUNICATION REQUESTED:\n'{clozetext}'"))
-    if re.findall("{{c\d:}}", clozetext.lower()):
+    if re.findall(r"{{c\d:}}", clozetext.lower()):
         raise Exception(red(f"EMPTY CLOZE DETECTED:\n'{clozetext}'"))
 
     # load the source text of the image in the gallery

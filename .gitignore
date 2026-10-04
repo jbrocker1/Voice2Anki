@@ -18,3 +18,7 @@ profiles/
 .aider*
 diy_scripts
 weird_audios
+
+# isolated env + bootstrapped uv, created by setup_env.py
+.venv/
+.uv/

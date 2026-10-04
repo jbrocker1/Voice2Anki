@@ -610,8 +610,14 @@ def display_price(sld_max_tkn: int, llm_choice: str) -> str:
     price = shared.llm_info[llm_choice]
     if isinstance(price, float):
         return f"${price} per second (actual price computation is probably wrong for now!)"
-    price_adj = price["input_cost_per_token"] * 0.9 + price["output_cost_per_token"] * 0.1
+    try:
+        price_adj = price["input_cost_per_token"] * 0.9 + price["output_cost_per_token"] * 0.1
+    except (KeyError, TypeError):
+        return f"No token pricing listed for model '{llm_choice}'"
     price_per_request = price_adj * sld_max_tkn
+    # free / local models and litellm's placeholder entries all cost 0 per token
+    if price_per_request <= 0:
+        return f"Model '{llm_choice}' is free or has no listed token pricing"
     price_per_dol = round(1 / price_per_request, 0)
     message = f"Price if all tokens used: ${price_per_request:.5f}."
     message += f"\nRequests per $1: {price_per_dol:.1f} req"

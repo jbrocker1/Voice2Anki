@@ -1,39 +1,60 @@
-pandas>=2.2.2
-gradio==4.40.0
-openai>=1.37.1
-litellm>=1.42.5
-scikit-learn>=1.5.1
-tiktoken>=0.7.0
-numpy>=1.26.2
-scipy>=1.14.0
-opencv-python>=4.10.0.84
-rapidfuzz >= 3.9.5
-sentence-transformers>=3.0.1
-ftfy>=6.2.0
+# Voice2Anki runtime dependencies.
+#
+# Strategy: keep meaningful floors but CAP every dependency whose API has
+# historically broken across a major version. The previous file floated these
+# with no upper bound, which silently dragged in incompatible releases
+# (gradio 4.x + huggingface_hub 1.x, torchaudio 2.11 without sox_effects, etc).
+#
+# NOTE: gradio (6) and deepgram-sdk (7) require the companion code migration in
+# utils/media.py, utils/gui.py, Voice2Anki.py and utils/main.py, which is done.
+#
+# No native/system prerequisites remain. ffmpeg + ffprobe come from static-ffmpeg,
+# image sniffing uses Pillow, and tesseract is only needed for the optional OCR mode.
+
+# --- core / UI ---
+gradio>=6.29,<7
+pandas>=2.2.2,<3
+numpy>=1.26.2,<3
+opencv-python>=4.10,<5
+rapidfuzz>=3.9.5
 joblib>=1.4.2
-platformdirs >= 4.2.2
-iterator_cacher >= 1.0.0  # by me
-async_cache >= 1.1.1
-py_ankiconnect  # by me
-beartype >= 0.19.0
-python-magic >= 0.4.27
+platformdirs>=4.2.2
+beartype>=0.19,<0.23
+aiohttp>=3.9,<4         # imported directly in utils/anki_utils.py (was undeclared)
+pillow>=10,<13         # image sniffing in utils/media.py, replacing python-magic
+scipy>=1.14,<2          # butterworth highpass/lowpass replacing torchaudio's sox_effects
 
-# ocr mode
-ocr_with_format  # by me
-
-torchaudio>=2.4.0
-pydub>=0.25.1
-
-tqdm>=4.66.1
-ankipandas>=0.3.15
+# --- text / parsing ---
 beautifulsoup4>=4.10.0
-pyclip>=0.7.0
 rtoml>=0.11.0
 fire>=0.6.0
-plotly>=5.18.0
-soundfile>=0.12.1
+tqdm>=4.66.1
+pyclip>=0.7.0
 
-# audio splitter
-pyrubberband>=0.3.0
-replicate>=0.23.1
-deepgram-sdk>=3.0.1
+# --- LLM / embeddings ---
+openai>=1.37.1,<3
+litellm>=1.42.5,<2
+scikit-learn>=1.5.1     # cosine_similarity in utils/memory.py
+
+# --- Anki integration ---
+ankipandas>=0.3.15
+py_ankiconnect          # by me
+
+# --- audio ---
+# ffmpeg/ffprobe need no manual install: static-ffmpeg supplies admin-free static
+# binaries, and utils/ffmpeg_bootstrap.py prefers a system install when present.
+pydub>=0.25.1
+static-ffmpeg>=3,<4
+deepgram-sdk>=7,<8
+
+# --- caching ---
+async_cache>=1.1.1
+
+# --- OCR mode (requires the tesseract binary on PATH) ---
+ocr_with_format         # by me
+
+# Dropped as unused (zero imports repo-wide): tiktoken, sentence-transformers, ftfy,
+# plotly, pyrubberband, replicate, iterator_cacher, soundfile. Dropped torchaudio
+# (and thus torch/transformers, ~2.5 GB): its only use, sox_effects, is now
+# reimplemented with pydub + scipy in utils/media.py, hence the explicit scipy pin
+# above rather than relying on scikit-learn to pull it in transitively.

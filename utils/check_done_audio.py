@@ -1,3 +1,10 @@
+try:  # run as `python -m utils.check_done_audio` from the repo root
+    from utils.ffmpeg_bootstrap import ensure_ffmpeg
+except ImportError:  # run as a standalone file from inside this directory
+    from ffmpeg_bootstrap import ensure_ffmpeg
+
+ensure_ffmpeg()  # must run before pydub resolves its ffmpeg binary
+
 import shutil
 import hashlib
 from tqdm import tqdm
@@ -10,7 +17,6 @@ from joblib import Memory
 from typing import Optional, List
 
 from logger import red, whi, cache_dir
-
 from typechecker import optional_typecheck
 
 @optional_typecheck

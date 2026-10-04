@@ -328,7 +328,18 @@ async def get_card_status(txt_chatgpt_cloz: str) -> str:
 @trace
 async def sync_anki() -> None:
     "trigger anki synchronization"
-    sync_output = await call_anki(action="sync")
+    try:
+        sync_output = await call_anki(action="sync")
+    except Exception as err:
+        # AnkiConnect refuses to sync unless AnkiWeb (or a custom sync server) is
+        # configured inside Anki itself. Syncing is optional here, so warn and
+        # carry on rather than taking the whole app down with it.
+        if "auth not configured" in str(err).lower():
+            red("Anki sync is not configured, skipping sync.")
+            red("Everything else works fine. To enable syncing, set your AnkiWeb")
+            red("credentials in Anki: Tools > Preferences > Syncing.")
+            return
+        raise
     assert sync_output is None or sync_output == "None", (
         f"Error during sync?: '{sync_output}'")
     # time.sleep(1)  # wait for sync to finish, just in case
@@ -508,8 +519,16 @@ assert anki_media.exists(), "Media folder not found!"
 shared.anki_media = anki_media
 assert shared.anki_media.name == "collection.media"
 
-# Check if everything is running fine
-asyncio.run(sync_anki())
+# Check if everything is running fine. Anki must be up with the addon enabled, so
+# an unreachable AnkiConnect is fatal: say so plainly instead of dumping a
+# traceback. A missing sync configuration is not fatal, sync_anki() handles it.
+try:
+    asyncio.run(sync_anki())
+except Exception as err:
+    red("Could not reach AnkiConnect.")
+    red(f"Underlying error: '{err}'")
+    red("Start Anki and make sure the AnkiConnect addon is installed and enabled.")
+    raise SystemExit(1)
 
 if __name__ == "__main__":
     print(

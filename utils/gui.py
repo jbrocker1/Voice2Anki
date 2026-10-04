@@ -31,9 +31,6 @@ cache_minute = 10
 with gr.Blocks(
         analytics_enabled=False,
         title=f"Voice2Anki V{shared.VERSION}",
-        theme=theme,
-        css=css,
-        head=html_head,
         # delete_cache=(60 * cache_minute, 60 * cache_minute),
         ) as demo:
 
@@ -261,7 +258,7 @@ with gr.Blocks(
                             # height=100,
                             # min_width=50,
                             container=True,
-                            show_download_button=True,
+                            buttons=["download"],
                             preview=False,
                             )
                     with gr.Column(scale=1):
@@ -283,7 +280,7 @@ with gr.Blocks(
                     label="Queued audio",
                     interactive=False,
                     wrap=True,
-                    height="100%",
+                    max_height="100%",
                     column_widths=["5%", "20%", "20%", "5%", "5%", "20%", "20%", "5%", "5%"],
                     )
 
@@ -300,7 +297,7 @@ with gr.Blocks(
                     value=None,
                     interactive=False,
                     wrap=True,
-                    height="100%",
+                    max_height="100%",
                     column_widths=["5%", "25%", "5%", "5%", "25%", "10%", "10%", "5%", "5%", "10%"],
                     )
 
@@ -310,7 +307,7 @@ with gr.Blocks(
                     value=None,
                     interactive=False,
                     wrap=True,
-                    height="100%",
+                    max_height="100%",
                     column_widths=["1%", "10%", "10%", "10%", "10%", "5%"],
                     )
 
@@ -325,7 +322,7 @@ with gr.Blocks(
     #                 render_markdown=False,
     #                 bubble_full_width=True,
     #                 layout="panel",
-    #                 height="100%",
+    #                 max_height="100%",
     #                 )
 
     #         with gr.Row():

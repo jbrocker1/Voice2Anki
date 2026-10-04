@@ -1,13 +1,14 @@
 import os
 import shutil
-import magic
 import re
 import shutil
 import time
 from joblib import Parallel, delayed
 from typing import List, Union, Tuple, Optional
 from pydub import AudioSegment
-import soundfile as sf
+from pydub.silence import detect_nonsilent
+from array import array
+from scipy.signal import butter, sosfilt
 from pathlib import Path, PosixPath
 import gradio as gr
 import queue
@@ -17,8 +18,8 @@ import cv2
 import numpy as np
 import pyclip
 import hashlib
-import torchaudio
 import copy
+from PIL import Image
 
 from .logger import whi, red, trace, Timeout
 from .ocr import get_text
@@ -27,10 +28,14 @@ from .typechecker import optional_typecheck
 
 
 @optional_typecheck
-def is_image_magic(file_path: Union[str, PosixPath]) -> bool:
-    mime = magic.Magic(mime=True)
-    file_type = mime.from_file(file_path)
-    return file_type.startswith('image/')
+def is_image_pillow(file_path: Union[str, PosixPath]) -> bool:
+    """Header-only check via Pillow, so no libmagic system library is needed."""
+    try:
+        with Image.open(file_path) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
 
 @optional_typecheck
 def is_image_cv2(file_path: Union[str, PosixPath]) -> bool:
@@ -174,7 +179,7 @@ def get_img_source(gallery: Union[List, None], queue=queue.Queue(), use_html: bo
         for img in gallery:
             try:
                 path = img.image.path
-                assert is_image_magic(path) or is_image_cv2(path), f"Not an image: {path}"
+                assert is_image_pillow(path) or is_image_cv2(path), f"Not an image: {path}"
             except Exception:
                 try:
                     path = img["image"]["path"]
@@ -186,7 +191,7 @@ def get_img_source(gallery: Union[List, None], queue=queue.Queue(), use_html: bo
                         cnt += 1
                         if cnt == 10:
                             raise Exception(f"img not found in path: {path}")
-                    assert is_image_magic(path) or is_image_cv2(path), f"Not an image: {path}"
+                    assert is_image_pillow(path) or is_image_cv2(path), f"Not an image: {path}"
                 except Exception:
                     # must be a tuple
                     assert isinstance(img, tuple), f"Invalid img type: {img}"
@@ -198,7 +203,7 @@ def get_img_source(gallery: Union[List, None], queue=queue.Queue(), use_html: bo
                         cnt += 1
                         if cnt == 10:
                             raise Exception(f"img not found: {img[0]}")
-                    assert is_image_magic(path) or is_image_cv2(path), f"Not an image: {path}"
+                    assert is_image_pillow(path) or is_image_cv2(path), f"Not an image: {path}"
             img_hash = hashlib.md5(open(path, 'rb').read()).hexdigest()[:10]
             new = shared.anki_media / f"{img_hash}.png"
             if not new.exists():
@@ -261,6 +266,93 @@ def reset_audio() -> List[dict]:
     whi("Resetting all audio")
     return [gr.update(value=None, label=f"Audio #{i+1}") for i in range(shared.audio_slot_nb)]
 
+def _sox_norm(seg: AudioSegment) -> AudioSegment:
+    """SoX `norm`: scale so the loudest sample reaches 0 dBFS."""
+    peak = seg.max_dBFS
+    if np.isneginf(peak):
+        return seg
+    return seg.apply_gain(-peak)
+
+
+def _butter_filter(seg: AudioSegment, btype: str, cutoff_hz: float, order: int) -> AudioSegment:
+    """ Butterworth filter on every channel, mirroring SoX's highpass/lowpass. """
+    sr = seg.frame_rate
+    cutoff = min(max(float(cutoff_hz), 1.0), (sr / 2) * 0.999)
+    sos = butter(order, cutoff, btype=btype, fs=sr, output="sos")
+    typecode = {1: "b", 2: "h", 4: "l"}[seg.sample_width]
+    lo, hi = -(2 ** (8 * seg.sample_width - 1)), 2 ** (8 * seg.sample_width - 1) - 1
+    channels = [seg] if seg.channels == 1 else seg.split()
+    filtered = []
+    for ch in channels:
+        samples = np.array(ch.get_array_of_samples(), dtype=np.float64)
+        vals = np.clip(np.round(sosfilt(sos, samples)), lo, hi).astype(np.int64)
+        filtered.append(vals)
+    interleaved = np.stack(filtered).T.reshape(-1) if len(filtered) > 1 else filtered[0]
+    buf = array(typecode)
+    buf.fromlist([int(v) for v in interleaved])
+    return AudioSegment(data=buf.tobytes(), sample_width=seg.sample_width, frame_rate=sr, channels=seg.channels)
+
+
+def _sox_silence(seg: AudioSegment, args: List[str]) -> AudioSegment:
+    """SoX `silence -l 1 0 <threshold> -1 <max_keep> <threshold>`: cap any run of
+    silence longer than <max_keep> seconds down to <max_keep> seconds."""
+    max_ms = int(round(float(args[-2]) * 1000))
+    thresh_dbfs = 20 * np.log10(float(str(args[-1]).rstrip("%")) / 100.0)
+    parts = []
+    prev_end = 0
+    for start, end in detect_nonsilent(seg, min_silence_len=max_ms, silence_thresh=thresh_dbfs, seek_step=10):
+        gap = start - prev_end
+        parts.append(AudioSegment.silent(duration=max_ms, frame_rate=seg.frame_rate) if gap > max_ms else seg[prev_end:start])
+        parts.append(seg[start:end])
+        prev_end = end
+    tail = len(seg) - prev_end
+    parts.append(AudioSegment.silent(duration=max_ms, frame_rate=seg.frame_rate) if tail > max_ms else seg[prev_end:])
+    out = seg[:0]
+    for p in parts:
+        out += p
+    return out
+
+
+def _sox_pad(seg: AudioSegment, args: List[str]) -> AudioSegment:
+    """SoX `pad <secs>[@<position>]`: add silence, leading (position 0) by default."""
+    lead_ms = trail_ms = 0
+    for spec in args:
+        length_str, _, position = str(spec).partition("@")
+        ms = int(round(float(length_str) * 1000))
+        if position in ("", "0"):
+            lead_ms += ms
+        else:
+            trail_ms += ms
+    out = seg
+    if trail_ms:
+        out = out + AudioSegment.silent(duration=trail_ms, frame_rate=seg.frame_rate)
+    if lead_ms:
+        out = AudioSegment.silent(duration=lead_ms, frame_rate=seg.frame_rate) + out
+    return out
+
+
+def apply_sox_chain(seg: AudioSegment, effects: List[list]) -> AudioSegment:
+    """Drop-in replacement for torchaudio.sox_effects.apply_effects_tensor, limited
+    to the effects actually configured in shared_module.py."""
+    for effect in effects:
+        if not effect:
+            continue
+        name, args = str(effect[0]), [str(a) for a in effect[1:]]
+        if name == "norm":
+            seg = _sox_norm(seg)
+        elif name in ("highpass", "lowpass"):
+            offset = 1 if args and args[0].startswith("-") else 0
+            order = abs(int(args[0])) if offset else 1
+            seg = _butter_filter(seg, name, float(args[offset]), order)
+        elif name == "silence":
+            seg = _sox_silence(seg, args)
+        elif name == "pad":
+            seg = _sox_pad(seg, args)
+        else:
+            red(f"Unsupported sox effect, skipping: {effect}")
+    return seg
+
+
 @optional_typecheck
 @trace
 def sound_preprocessing(audio_mp3_path: Union[PosixPath, str]) -> PosixPath:
@@ -273,18 +365,9 @@ def sound_preprocessing(audio_mp3_path: Union[PosixPath, str]) -> PosixPath:
 
     assert "_proc" not in str(audio_mp3_path), f"Audio already processed apparently: {audio_mp3_path}"
 
-    # load from file
-    waveform, sample_rate = torchaudio.load(audio_mp3_path)
-
-    waveform, sample_rate = torchaudio.sox_effects.apply_effects_tensor(
-            waveform,
-            sample_rate,
-            shared.preprocess_sox_effects,
-            )
-
-    # write to file as wav
-    sf.write(str(audio_mp3_path), waveform.numpy().T, sample_rate, format='wav')
-    temp = AudioSegment.from_wav(audio_mp3_path)
+    # load from file and apply the sox-equivalent chain in memory
+    temp = AudioSegment.from_file(audio_mp3_path)
+    temp = apply_sox_chain(temp, shared.preprocess_sox_effects)
     new_path = Path(audio_mp3_path).parent / (Path(audio_mp3_path).stem + "_proc" + Path(audio_mp3_path).suffix)
     temp.export(new_path, format="mp3")
 
@@ -316,29 +399,21 @@ def force_sound_processing(path: Optional[Union[str, PosixPath]] = None) -> Posi
     if out_path.exists():
         red(f"Output file already exists: {out_path}\nI will not replace it")
 
-    waveform, sample_rate = torchaudio.load(path)
-    waveform, sample_rate = torchaudio.sox_effects.apply_effects_tensor(
-            waveform,
-            sample_rate,
-            shared.force_preprocess_sox_effects,
-            )
+    # decode + filter fully in memory first, so a decode failure cannot leave the
+    # file half-moved
+    temp = AudioSegment.from_file(path)
+    temp = apply_sox_chain(temp, shared.force_preprocess_sox_effects)
 
-    # saving file as wav then as mp3
     try:
-        assert not (path.parent / (path.stem + ".wav")).exists(), "sound file already exists as wav"
-        sf.write(str(path.parent / (path.stem + ".wav")), waveform.numpy().T, sample_rate, format='wav')
-        temp = AudioSegment.from_wav(path.parent / (path.stem + ".wav"))
         red(f"Moving {path} to {out_path}")
         shutil.move(path, out_path)
         assert not path.exists(), f"{path} already exists"
         temp.export(path, format="mp3")
-        Path(path.parent / (path.stem + ".wav")).unlink(missing_ok=False)
         gr.Warning(red(f"Done forced preprocessing {path}. The original is in {out_path}"))
         return path
     except Exception as err:
         gr.Warning(red(f"Error when processing sound: {err}"))
         # undo everything
-        Path(path.parent / (path.stem + ".wav")).unlink(missing_ok=True)
         if out_path.exists():
             shutil.move(out_path, path)
         assert path.exists(), f"File was lost! {path}"
@@ -431,17 +506,15 @@ def qg_add_to_latest(*qg) -> List[Optional[Union[gr.Gallery, dict]]]:
 def create_audio_compo(**kwargs) -> gr.Microphone:
     defaults = {
             "type": "filepath",
-            "format": ".mp3",
+            "format": "mp3",
             "value": None,
-            "min_length": 1,
             "label": "Untitled",
             "show_label": True,
             "container": True,
-            "show_share_button": False,
-            "show_download_button": True,
+            "buttons": ["download"],
             "elem_classes": ["js_audiocomponent"],
             "min_width": "100px",
-            "waveform_options": {"show_controls": False, "show_recording_waveform": False},
+            "waveform_options": {"show_recording_waveform": False},
             "editable": True,
             "scale": 1,
             }

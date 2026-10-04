@@ -32,27 +32,45 @@
 ## Getting Started
 
 ### Prerequisites
-* Python 3.11 or later (required for asyncio.timeout)
+* **Nothing to install by hand.** `setup.bat` (Windows) or `python setup_env.py` fetches a pinned **Python 3.13** via [uv](https://docs.astral.sh/uv/), installs every dependency, and supplies `ffmpeg`/`ffprobe` itself — no admin rights, no manual ffmpeg, no libmagic.
 * Anki with [AnkiConnect](https://ankiweb.net/shared/info/2055492159) addon installed and enabled
 * An OpenAI API key or compatible LLM service
+* *(optional)* The tesseract OCR engine, only if you want the OCR/image features
 
 ### Quick Installation
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/thiswillbeyourgithub/Voice2Anki.git
-   cd Voice2Anki
-   ```
-2. Install dependencies:
-   ```bash
-   python -m pip install -r requirements.txt
-   ```
+**Windows:** double-click **`setup.bat`**. It finds a Python interpreter, builds the environment, then offers to launch the app.
+
+**Any platform with Python 3.8+:**
+```bash
+git clone https://github.com/thiswillbeyourgithub/Voice2Anki.git
+cd Voice2Anki
+python setup_env.py
+```
+
+Either way you get an isolated `.venv/` pinned to Python 3.13. The script is idempotent — re-run it after a `git pull` to apply dependency changes, add `--recreate` to rebuild from scratch, or run `python setup_env.py --check` for a component-by-component status report. Prefer your own venv? `pip install -r requirements.txt` still works, but then install `ffmpeg` yourself.
+
+#### How ffmpeg is provided
+pydub needs `ffmpeg` **and** `ffprobe` and offers no environment-variable override — it scans `PATH` once, at import time. So `utils/__init__.py` calls `utils/ffmpeg_bootstrap.py` before anything imports pydub. That helper prefers a system ffmpeg when you have one, and otherwise appends the static binaries from the [`static-ffmpeg`](https://pypi.org/project/static-ffmpeg/) package (downloaded into `.venv/`, no admin needed). Because ordering matters, standalone scripts run from inside `utils/` import the bootstrap directly.
+
+#### Optional: tesseract (OCR mode only)
+Tesseract is a separate C++ program, so it is the one thing that cannot be pip-installed. You only need it for the OCR feature; audio, transcription and Anki import all work without it.
+* **Windows**: `winget install UB-Mannheim.TesseractOCR`
+* **macOS**: `brew install tesseract`
+* **Debian / Ubuntu**: `sudo apt install tesseract-ocr`
+* **Fedora**: `sudo dnf install tesseract`
 
 ### Running Voice2Anki
 1. Start Anki and ensure AnkiConnect is enabled
-2. Launch Voice2Anki:
+2. Activate the environment, then launch:
    ```bash
+   # Windows PowerShell
+   .venv\Scripts\Activate.ps1
+   # macOS / Linux
+   source .venv/bin/activate
+
    python Voice2Anki.py
    ```
+   (You can also skip activating and call `.venv/bin/python Voice2Anki.py` / `.venv\Scripts\python.exe Voice2Anki.py` directly.)
    
 ### Key Launch Options
 * `--open_browser`: Automatically opens your default browser
@@ -70,6 +88,13 @@ python Voice2Anki.py --help
 1. Open your browser to the URL shown in the console output
 2. Enter a profile name in the `profile` field (this loads default settings)
 3. Configure your API key in the settings
+4. Pick an LLM in the `LLM` dropdown on the `Memories & Buffer` tab
+
+### Optional Anki Syncing
+Syncing is entirely optional and Voice2Anki starts fine without it.
+* Anki must be **running** with the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on installed and enabled (default port `8765`). If AnkiConnect can't be reached, Voice2Anki stops with an explanatory message rather than a traceback.
+* If AnkiConnect reports `sync: auth not configured`, Voice2Anki prints a warning and skips syncing. Card creation still works.
+* To enable syncing, open Anki and set your AnkiWeb login in `Tools > Preferences > Syncing` (or configure a custom sync server), then use the `Sync anki` button.
 
 ## Important Notes
 

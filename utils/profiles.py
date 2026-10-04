@@ -471,7 +471,7 @@ def load_user_functions() -> Tuple[str, str]:
     if [f
         for f in shared.func_dir.iterdir()
         if f.name.endswith("chains.py")]:
-        red("Found chains.py")
+        yel("Found chains.py")
         with open((shared.func_dir / "chains.py").absolute(), "r") as f:
             chains += f.read()
     return flashcard_editor, chains
@@ -480,12 +480,12 @@ def load_user_functions() -> Tuple[str, str]:
 @optional_typecheck
 def load_user_chain(*buttons) -> List:
     if shared.user_chains is not None:
-        return buttons
+        return list(buttons)
     if not [f
             for f in shared.func_dir.iterdir()
             if f.name.endswith("chains.py")]:
-        red("No chains.py found")
-        return buttons
+        whi("No chains.py found")
+        return list(buttons)
     # load chains if not already done
     buttons = list(buttons)
     yel("Loading chains.py")
