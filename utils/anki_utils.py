@@ -448,8 +448,8 @@ async def get_anki_content(nid: List[Union[str, int]]) -> List[str]:
         return [inf["fields"]["body"]["value"] for inf in infos]
     else:
         fields = infos[0]["fields"]
-        first_field = [f for f in fields if f["order"]==0]
-        return [inf["fields"][first_field]["value"] for inf in infos]
+        first_field = [name for name, f in fields.items() if f["order"]==0]
+        return [inf["fields"][first_field[0]]["value"] for inf in infos]
 
 
 @optional_typecheck
