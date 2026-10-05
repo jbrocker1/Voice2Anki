@@ -1,6 +1,6 @@
 import gradio as gr
 import inspect
-from typing import Callable, Any
+from typing import Callable, Any, Union
 from joblib import hash as jhash
 import asyncio
 import threading
@@ -267,25 +267,34 @@ def trace(func: Callable) -> Callable:
 
 
 @optional_typecheck
-def Timeout(limit: int) -> Callable:
+def Timeout(limit: Union[int, Callable[[], int]]) -> Callable:
     """wrapper to add a timeout to function. I had to use threading because
-    signal could not be used outside of the main thread in gradio"""
+    signal could not be used outside of the main thread in gradio
+
+    ``limit`` may be a callable, evaluated on each call, for functions whose
+    acceptable duration depends on what they are about to do -- a local 3B
+    model on CPU needs minutes where a cloud API needs seconds.
+    """
     if shared.disable_timeout:
         @optional_typecheck
         def decorator(func: Callable) -> Callable:
             return func
         return decorator
 
+    def resolve_limit() -> int:
+        return limit() if callable(limit) else limit
+
     @optional_typecheck
     def decorator(func: Callable) -> Callable:
         if asyncio.iscoroutinefunction(func):
             async def wrapper(*args, **kwargs):
-                async with asyncio.timeout(limit):
+                async with asyncio.timeout(resolve_limit()):
                     return await func(*args, **kwargs)
         else:
             @wraps(func)
             def wrapper(*args, **kwargs):
                 # return func(*args, **kwargs)  # for debugging
+                seconds = resolve_limit()
                 result = []
                 def appender(func, *args, **kwargs):
                     result.append(func(*args, **kwargs))
@@ -305,8 +314,8 @@ def Timeout(limit: int) -> Callable:
                 start = time.time()
                 while shared.running_threads["timeout"] and thread.is_alive():
                     time.sleep(0.1)
-                    if time.time() - start > limit:
-                        raise Exception(f"Reached timeout for {func} after {limit}s")
+                    if time.time() - start > seconds:
+                        raise Exception(f"Reached timeout for {func} after {seconds}s")
                 if not shared.running_threads["timeout"]:
                     raise Exception(f"Thread of func {func} was killed")
 

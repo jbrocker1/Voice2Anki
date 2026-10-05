@@ -32,6 +32,10 @@ attrs==26.1.0
     #   referencing
 audioop-lts==0.2.2
     # via gradio
+av==18.1.0
+    # via
+    #   -r requirements.txt
+    #   faster-whisper
 beartype==0.22.9
     # via
     #   -r requirements.txt
@@ -67,12 +71,15 @@ cloudpickle==3.1.2
 colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   colorlog
+    #   loguru
     #   tqdm
     #   typer
 colorlog==6.12.0
     # via ankipandas
 cryptography==50.0.2 ; platform_machine != 'ppc64le' and platform_machine != 's390x' and sys_platform == 'linux'
     # via secretstorage
+ctranslate2==4.8.2
+    # via faster-whisper
 deepgram-sdk==7.12.0
     # via -r requirements.txt
 distro==1.9.0
@@ -81,6 +88,10 @@ docutils==0.23
     # via readme-renderer
 fastapi==0.142.2
     # via gradio
+fastembed==0.8.1
+    # via -r requirements.txt
+faster-whisper==1.2.1
+    # via -r requirements.txt
 fastuuid==0.14.0
     # via litellm
 filelock==3.32.7
@@ -93,6 +104,8 @@ fire==0.7.1
     #   -r requirements.txt
     #   ocr-with-format
     #   py-ankiconnect
+flatbuffers==25.12.19
+    # via onnxruntime
 frozenlist==1.8.0
     # via
     #   aiohttp
@@ -136,6 +149,8 @@ httpx==0.28.1
     #   safehttpx
 huggingface-hub==1.33.0
     # via
+    #   fastembed
+    #   faster-whisper
     #   gradio
     #   gradio-client
     #   litellm
@@ -184,6 +199,8 @@ keyring==25.7.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via twine
 litellm==1.104.0
     # via -r requirements.txt
+loguru==0.7.3
+    # via fastembed
 markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.4
@@ -192,6 +209,8 @@ markupsafe==3.0.4
     #   jinja2
 mdurl==0.1.2
     # via markdown-it-py
+mmh3==5.3.1
+    # via fastembed
 more-itertools==11.1.0 ; platform_machine != 'ppc64le' and platform_machine != 's390x'
     # via
     #   jaraco-classes
@@ -208,14 +227,21 @@ numpy==2.5.3
     # via
     #   -r requirements.txt
     #   ankipandas
+    #   ctranslate2
+    #   fastembed
     #   gradio
     #   ocr-with-format
+    #   onnxruntime
     #   opencv-python
     #   pandas
     #   scikit-learn
     #   scipy
 ocr-with-format==0.14
     # via -r requirements.txt
+onnxruntime==1.30.0
+    # via
+    #   fastembed
+    #   faster-whisper
 openai==2.54.0
     # via
     #   -r requirements.txt
@@ -234,6 +260,7 @@ packaging==26.3
     #   gradio-client
     #   huggingface-hub
     #   litellm
+    #   onnxruntime
     #   pytesseract
     #   twine
 pandas==2.3.3
@@ -247,6 +274,7 @@ pasteboard==0.3.3 ; sys_platform == 'darwin'
 pillow==12.3.0
     # via
     #   -r requirements.txt
+    #   fastembed
     #   gradio
     #   pytesseract
 platformdirs==4.12.3
@@ -257,8 +285,12 @@ propcache==0.5.4
     # via
     #   aiohttp
     #   yarl
+protobuf==7.36.2
+    # via onnxruntime
 py-ankiconnect==1.1.4
     # via -r requirements.txt
+py-rust-stemmers==0.1.8
+    # via fastembed
 pyclip==0.7.0
     # via -r requirements.txt
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_machine != 'ppc64le' and platform_machine != 's390x' and platform_python_implementation != 'PyPy' and sys_platform == 'linux'
@@ -307,6 +339,7 @@ pywin32-ctypes==0.2.3 ; platform_machine != 'ppc64le' and platform_machine != 's
     # via keyring
 pyyaml==6.0.3
     # via
+    #   ctranslate2
     #   gradio
     #   huggingface-hub
     #   litellm
@@ -324,6 +357,7 @@ regex==2026.9.29
     # via tiktoken
 requests==2.34.2
     # via
+    #   fastembed
     #   requests-toolbelt
     #   static-ffmpeg
     #   tiktoken
@@ -377,12 +411,17 @@ threadpoolctl==3.7.0
 tiktoken==0.14.0
     # via litellm
 tokenizers==0.23.2
-    # via litellm
+    # via
+    #   fastembed
+    #   faster-whisper
+    #   litellm
 tomlkit==0.14.0
     # via gradio
 tqdm==4.70.1
     # via
     #   -r requirements.txt
+    #   fastembed
+    #   faster-whisper
     #   huggingface-hub
     #   openai
 twine==7.0.0
@@ -424,6 +463,8 @@ wcwidth==0.9.1
     # via ftfy
 websockets==17.2
     # via deepgram-sdk
+win32-setctime==1.2.0 ; sys_platform == 'win32'
+    # via loguru
 yarl==1.25.1
     # via aiohttp
 zipp==4.1.1

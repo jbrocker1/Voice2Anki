@@ -528,6 +528,18 @@ def roll_audio(*slots) -> List[Optional[Union[dict, str]]]:
     assert len(slots) > 1, f"invalid number of audio slots: {len(slots)}"
     assert isinstance(slots, tuple), f"unexpected slots type: {slots}"
     slots = list(slots)
+
+    # gradio >=6 hands recorded audio over as FileData dicts, which are not
+    # valid output values: convert them to update dicts before any early
+    # return so they can be sent back to the audio components
+    for i, s in enumerate(slots):
+        if isinstance(s, dict) and s.get("__type__") != "update":
+            slots[i] = {
+                    "__type__": "update",  # this is how gr.update works
+                    "label": s.get("orig_name", "New"),
+                    "value": s.get("path"),
+                    }
+
     if all((slot is None for slot in slots)):
         return slots
     if all((slot is None for slot in slots[1:])):
@@ -543,10 +555,13 @@ def roll_audio(*slots) -> List[Optional[Union[dict, str]]]:
             # it's already a path, no need to modify it
             continue
         elif isinstance(s, dict):
+            if s.get("__type__") == "update":
+                # already converted to an update dict above
+                continue
             slots[i] = {
                     "__type__": "update",  # this is how gr.update works
-                    "label": slots[i]["orig_name"],
-                    "value": slots[i]["path"],
+                    "label": s.get("orig_name", "New"),
+                    "value": s.get("path"),
                     }
     while None in slots:
         slots.remove(None)

@@ -35,6 +35,14 @@ pyclip>=0.7.0
 openai>=1.37.1,<3
 litellm>=1.42.5,<2
 scikit-learn>=1.5.1     # cosine_similarity in utils/memory.py
+faster-whisper>=1.1,<2 # local speech-to-text (CTranslate2), GPU when available
+fastembed>=0.5,<1       # local embeddings (ONNX Runtime, CPU by design)
+
+# NOTE: the local LLM (llama-cpp-python) is intentionally NOT listed here.
+# Its wheel depends on the machine's accelerator -- CPU, CUDA 12.5, CUDA 13.0 or
+# Metal -- so there is no single artifact that can live in a universal lockfile.
+# setup_env.py picks the matching prebuilt wheel from the official indexes
+# instead (see LLAMA_CPP_INDEXES there).
 
 # --- Anki integration ---
 ankipandas>=0.3.15
@@ -46,6 +54,11 @@ py_ankiconnect          # by me
 pydub>=0.25.1
 static-ffmpeg>=3,<4
 deepgram-sdk>=7,<8
+# PyAV decodes the audio faster-whisper reads. Cap below 19: that release dropped
+# the `metadata_errors` kwarg which faster-whisper's audio.decode_audio() still
+# passes, so every transcription died with "open() got an unexpected keyword
+# argument". faster-whisper itself only asks for av>=11, hence the cap here.
+av>=11,<19
 
 # --- caching ---
 async_cache>=1.1.1

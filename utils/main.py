@@ -34,6 +34,9 @@ from .memory import prompt_filter, load_prev_prompts, tkn_len, transcript_templa
 from .media import sound_preprocessing, get_img_source, format_audio_component, rgb_to_bgr
 from .profiles import ValueStorage
 from .typechecker import optional_typecheck
+from . import local_stt
+from . import model_manifest as local_models
+from . import local_llm
 
 litellm.set_verbose = False  #shared.debug
 shared.pv = ValueStorage()
@@ -63,6 +66,49 @@ def resolve_llm_info(model: str) -> dict:
         f"LLM '{model}' is not listed in litellm's model info, so Voice2Anki "
         "can't check its token limit or estimate its cost. Pick a model from "
         "the LLM dropdown on the 'Memories & Buffer' tab.")
+
+# (substring identifying the provider, profile field holding the key, env var, label)
+# Only providers Voice2Anki actually has a settings box for are listed; anything
+# else (gemini, groq, ollama, a local GGUF...) is left unchecked rather than
+# demanding a key that has nowhere to go.
+API_KEY_PROVIDERS = (
+        ("openai", "txt_openai_api_key", "OPENAI_API_KEY", "OpenAI"),
+        ("mistral", "txt_mistral_api_key", "MISTRAL_API_KEY", "Mistral"),
+        ("deepgram", "txt_deepgram_api_key", "DEEPGRAM_API_KEY", "Deepgram"),
+        ("openrouter", "txt_openrouter_api_key", "OPENROUTER_API_KEY", "OpenRouter"),
+        )
+
+@optional_typecheck
+def require_credential(choice: str, purpose: str) -> None:
+    """Raise a readable error unless `choice` has the key it needs.
+
+    Local models run with nothing configured, which is the whole point of the
+    default install; a cloud choice only needs *its own* key, not one of any
+    of the stored keys. This replaces the old blanket check that fired even
+    when the selected model could have worked.
+    """
+    if choice in local_models.LLM or choice in local_models.STT or choice in local_models.EMBED:
+        return
+
+    # Ask litellm who serves this model instead of substring-matching its name:
+    # 'gpt-4o-mini' never contains 'openai' yet needs the OpenAI key exactly as
+    # much as 'openai/gpt-4o-mini' does. It raises on ids it doesn't know (the
+    # STT ones such as 'openai:whisper-1'), hence the fallback.
+    provider = None
+    try:
+        provider = litellm.get_llm_provider(model=choice)[1]
+    except Exception:
+        provider = None
+    haystack = (provider or choice).lower()
+
+    for prov, field, env_var, label in API_KEY_PROVIDERS:
+        if prov in haystack:
+            if (shared.pv[field] or "").strip() or (os.environ.get(env_var) or "").strip():
+                return
+            raise Exception(red(
+                f"'{choice}' needs a {label} API key for {purpose}, and none is set. "
+                f"Add one in the settings tab, or pick a local model to run without "
+                f"any API key."))
 
 d = datetime.today()
 today = f"{d.day:02d}/{d.month:02d}/{d.year:04d}"
@@ -148,18 +194,17 @@ def whisper_cached(
     of the content is used instead."""
     red(f"Calling whisper because not in cache: {audio_path}")
 
-    assert shared.pv["txt_openai_api_key"] or shared.pv["txt_deepgram_api_key"], "Missing OpenAI or deepgram API key, needed for Whisper"
-    if "openai" in stt_model:
-        assert shared.pv["txt_openai_api_key"], "Missing OpenAI API key, needed for Whisper"
-        if shared.openai_client is None:
-            shared.openai_client = openai.OpenAI(api_key=shared.pv["txt_openai_api_key"].strip())
-    elif "deepgram" in stt_model:
-        assert shared.pv["txt_deepgram_api_key"], "Missing Deepgram API key, needed for Whisper"
-        os.environ["DEEPGRAM_API_TOKEN"] = shared.pv["txt_deepgram_api_key"].strip()
+    require_credential(stt_model, "transcription")
+    if not local_stt.is_local_stt(stt_model):
+        if "openai" in stt_model:
+            if shared.openai_client is None:
+                shared.openai_client = openai.OpenAI(api_key=shared.pv["txt_openai_api_key"].strip())
+        elif "deepgram" in stt_model:
+            os.environ["DEEPGRAM_API_TOKEN"] = shared.pv["txt_deepgram_api_key"].strip()
 
-    if txt_whisp_prompt.strip() == "":
+    if txt_whisp_prompt is None or txt_whisp_prompt.strip() == "":
         txt_whisp_prompt = None
-    if txt_whisp_lang.strip() == "":
+    if txt_whisp_lang is None or txt_whisp_lang.strip() == "":
         txt_whisp_lang = None
 
     try:
@@ -252,6 +297,18 @@ def whisper_cached(
                         assert text, "Empty text from deepgram transcription"
                         transcript["duration"] = transcript["metadata"]["duration"]
                         transcript["text"] = text
+
+                    elif local_stt.is_local_stt(stt_model):
+                        # faster-whisper, fully offline. Same 'text' and
+                        # 'duration' fields as the cloud branches above, which is
+                        # all the rest of the pipeline reads.
+                        transcript = local_stt.transcribe(
+                            stt_model,
+                            audio_path,
+                            language=txt_whisp_lang,
+                            prompt=txt_whisp_prompt,
+                            temperature=sld_whisp_temp,
+                            )
                     else:
                         raise ValueError(stt_model)
 
@@ -294,8 +351,8 @@ def thread_whisp_then_llm(audio_mp3: Optional[Union[PosixPath, str]]) -> None:
     audio_mp3 = format_audio_component(audio_mp3)
     whi(f"Transcribing audio for the cache: {audio_mp3}")
 
-    if not (shared.pv["txt_openai_api_key"] or shared.pv["txt_deepgram_api_key"] or shared.pv["txt_mistral_api_key"] or shared.pv["txt_openrouter_api_key"]):
-        raise Exception(red("No API key provided for any LLM. Do it in the settings."))
+    require_credential(shared.pv["stt_choice"], "transcription")
+    require_credential(shared.pv["llm_choice"], "card generation")
 
     with open(audio_mp3, "rb") as f:
         audio_hash = hashlib.sha256(f.read()).hexdigest()
@@ -710,7 +767,7 @@ async def async_parallel_alfred(splits, *args, **kwargs):
 @optional_typecheck
 @trace
 @smartcache
-@Timeout(60)
+@Timeout(lambda: 900 if local_llm.is_local_llm(shared.pv["llm_choice"]) else 60)
 @llm_cache.cache(ignore=["cache_mode"])
 def alfred(
         txt_audio: str,
@@ -732,8 +789,6 @@ def alfred(
         return "Empty transcription"
     if txt_audio.strip().startswith("Error"):
         raise Exception(red("Error when transcribing sound."))
-    if not txt_chatgpt_context:
-        raise Exception(red("No txt_chatgpt_context found."))
     assert isinstance(prompt_management, str), f"Invalid type of prompt_management: {prompt_management}"
     assert isinstance(cache_mode, bool), f"Invalid type of cache_mode: {cache_mode}"
     if txt_audio.startswith("Very short audio, so unreliable transcript: "):
@@ -758,9 +813,11 @@ def alfred(
             return red(mess)
     if txt_audio.count(" ") < 3:
         return red("Too few words in txt_audio to be plausible")
+    if not txt_chatgpt_context:
+        gr.Warning(red("No txt_chatgpt_context found."))
+        return red("No 'LLM context' set: fill the 'LLM context' box in the Controls tab.")
 
-    if not (shared.pv["txt_openai_api_key"] or shared.pv["txt_mistral_api_key"] or shared.pv["txt_openrouter_api_key"]):
-        raise Exception(red("No API key provided for any LLM. Do it in the settings."))
+    require_credential(llm_choice, "card generation")
 
     # automatically split repeated newlines as several distinct cards
     txt_audio = txt_audio.strip()
@@ -812,7 +869,8 @@ def alfred(
     # pprint(formatted_messages)
 
     try:
-        response = litellm.completion(
+        # routes to llama.cpp for a local model, to litellm otherwise
+        response = local_llm.completion(
                 model=llm_choice,
                 messages=formatted_messages,
                 temperature=temperature,
@@ -895,7 +953,7 @@ def dirload_splitted(checkbox: bool, *audios: Optional[Union[List, bool]]) -> Li
     """
     if not checkbox:
         whi("Not running Dirload because checkbox is unchecked")
-        return audios
+        return list(audios)
     else:
         assert shared.pv["enable_dirload"], "Incoherent UI"
 
@@ -1062,8 +1120,7 @@ def audio_edit(
     output from LLM."""
 
     os.environ["OPENAI_API_KEY"] = shared.pv["txt_openai_api_key"].strip()
-    if not shared.pv["txt_openai_api_key"]:
-        raise Exception(red("No API key provided for OpenAI in the settings."))
+    require_credential(shared.pv["llm_choice"], "editing cards")
 
 
     assert (audio is None and audio_txt) or (audio is not None and audio_txt is None), f"Can't give both audio and text to AudioEdit"
@@ -1191,7 +1248,7 @@ def audio_edit(
 
     whi(f"Editing via {model_to_use}:")
     whi(prompt)
-    response = litellm.completion(
+    response = local_llm.completion(
             model=model_to_use,
             messages=messages,
             temperature=0,
@@ -1331,9 +1388,9 @@ def Voice2Anki_db_save(
 def to_anki(
         audio_mp3_1: Optional[Union[dict, str]],
         txt_audio: Optional[str],
-        txt_chatgpt_cloz: str,
+        txt_chatgpt_cloz: Optional[str],
         txt_chatgpt_context: Optional[str],
-        txt_deck: str,
+        txt_deck: Optional[str],
         txt_tags: Optional[List[str]],
         gallery: Optional[List[Union[np.ndarray, gr.Gallery, dict]]],
         check_marked: bool,
@@ -1342,13 +1399,17 @@ def to_anki(
     "function called to do wrap it up and send to anki"
     whi("Entering to_anki")
     if not txt_audio:
-        raise Exception(red("missing txt_audio"))
+        gr.Warning(red("Missing transcript: record an audio then press 'Transcribe' first."))
+        return
     if not txt_chatgpt_cloz:
-        raise Exception(red("missing txt_chatgpt_cloz"))
+        gr.Warning(red("Missing cloze(s): press 'Clozify' to generate the flashcard first."))
+        return
     if not txt_deck:
-        raise Exception(red("missing txt_deck"))
+        gr.Warning(red("Missing deck name: pick or type a deck name in Settings > Anki > 'Deck name'."))
+        return
     if not txt_tags:
-        raise Exception(red("missing txt_tags"))
+        gr.Warning(red("Missing tags: pick or type tags in Settings > Anki > 'Tags'."))
+        return
 
     if txt_chatgpt_cloz.startswith("Error with ChatGPT"):
         raise Exception(red(f"Error with chatgpt: '{txt_chatgpt_cloz}'"))

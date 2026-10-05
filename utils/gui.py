@@ -28,6 +28,17 @@ theme = gr.themes.Soft(
 
 
 cache_minute = 10
+
+def _known(choices, value):
+    """A stored value that is still offered, else the first choice.
+
+    Profiles persist whatever was selected, and litellm's model list changes
+    between releases, so a saved value can name a model the dropdown no longer
+    has. Falling back to the first entry is better than starting with an empty
+    dropdown that Gradio cannot resolve.
+    """
+    choices = list(choices)
+    return value if value in choices else (choices[0] if choices else None)
 with gr.Blocks(
         analytics_enabled=False,
         title=f"Voice2Anki V{shared.VERSION}",
@@ -99,12 +110,12 @@ with gr.Blocks(
                         sld_improve = gr.Slider(minimum=0, maximum=10, value=5.0, step=1.0, label="Mem priority", scale=1, elem_id="js_mempriority", show_label=True)
                         improve_btn = gr.Button(value="Memorize", variant="secondary", elem_id="js_llmfeedbackbtn", size="sm", min_width=50, scale=3)
                         sld_buffer = gr.Number(minimum=0, maximum=float(shared.max_message_buffer), step=1.0, value=(shared.pv["sld_buffer"] if (shared.audio_slot_nb==1) else 0), label="Buffer size", scale=1, visible=(shared.audio_slot_nb==1))
-                prompt_manag = gr.Radio(choices=["1 per mess", "Stuff as XML in sys", "Stuff as XML in user"], value=shared.pv["prompt_management"], interactive=True, label="Prompt style", show_label=False, scale=1)
+                prompt_manag = gr.Radio(choices=["1 per mess", "Stuff as XML in sys", "Stuff as XML in user"], value=_known(["1 per mess", "Stuff as XML in sys", "Stuff as XML in user"], shared.pv["prompt_management"]), interactive=True, label="Prompt style", show_label=False, scale=1)
 
             with gr.Row():
                 with gr.Column(scale=10):
                     with gr.Row():
-                        llm_choice = gr.Dropdown(value=shared.pv["llm_choice"], choices=[llm for llm in shared.llm_info.keys()], label="LLM", show_label=True, scale=0, multiselect=False)
+                        llm_choice = gr.Dropdown(value=_known(shared.llm_info.keys(), shared.pv["llm_choice"]), choices=list(shared.llm_info.keys()), label="LLM", show_label=True, scale=0, multiselect=False)
                         sld_max_tkn = gr.Number(minimum=0, maximum=15000, value=shared.pv["sld_max_tkn"], step=100.0, label="LLM avail. tkn.", scale=1)
                         sld_temp = gr.Slider(minimum=0, maximum=1.0, value=shared.pv["sld_temp"], step=0.1, label="LLM temp", scale=1)
                         txt_chatgpt_context = gr.Textbox(value=shared.pv["txt_chatgpt_context"], lines=2, label="LLM context", placeholder="context for ChatGPT", min_width=100)
@@ -112,7 +123,7 @@ with gr.Blocks(
             with gr.Row():
                 txt_price = gr.Textbox(value=lambda: display_price(shared.pv["sld_max_tkn"], shared.pv["llm_choice"]), label="Price", interactive=False, max_lines=2, lines=2, scale=2, min_width=100)
                 sld_whisp_temp = gr.Slider(minimum=0, maximum=1, value=shared.pv["sld_whisp_temp"], step=0.1, label="Whisper temp", scale=1)
-                stt_choice = gr.Dropdown(value=shared.pv["stt_choice"], choices=shared.stt_models, label="STT model", show_label=True, scale=1, multiselect=False)
+                stt_choice = gr.Dropdown(value=_known(shared.stt_models, shared.pv["stt_choice"]), choices=shared.stt_models, label="STT model", show_label=True, scale=1, multiselect=False)
 
             with gr.Row():
                 flag_audio_btn = gr.Button(value="Flag audio", visible=shared.pv["enable_flagging"], size="sm")
@@ -139,6 +150,7 @@ with gr.Blocks(
                 audio_corrector = create_audio_compo(
                         label="Edit by voice",
                         container=False,
+                        show_label=False,
                         scale=1,
                         editable=False,
                         )
@@ -193,7 +205,7 @@ with gr.Blocks(
             with gr.Row():
                 txt_whisp_prompt = gr.Textbox(value=shared.pv["txt_whisp_prompt"], lines=2, label="SpeechToText context", placeholder="context for whisper")
             with gr.Column():
-                choice_embed = gr.Dropdown(value=shared.pv["choice_embed"], choices=shared.embedding_models, label="Embedding model", show_label=True, scale=0, multiselect=False)
+                choice_embed = gr.Dropdown(value=_known(shared.embedding_models, shared.pv["choice_embed"]), choices=shared.embedding_models, label="Embedding model", show_label=True, scale=0, multiselect=False)
                 txt_openai_api_key = gr.Textbox(value=shared.pv["txt_openai_api_key"], label="OpenAI API key", lines=1)
                 txt_mistral_api_key = gr.Textbox(value=shared.pv["txt_mistral_api_key"], label="MistralAI API key", lines=1)
                 txt_openrouter_api_key = gr.Textbox(value=shared.pv["txt_openrouter_api_key"], label="Openrouter API key", lines=1)
@@ -1219,4 +1231,6 @@ with gr.Blocks(
 
 
     if shared.pv.profile_name == "default":
-        gr.Warning("Enter a profile then press enter.")
+        # gr.Warning is a no-op toast outside of events and falls back to a
+        # console UserWarning, so print the hint directly instead
+        yel("Tip: enter a profile name then press enter.")

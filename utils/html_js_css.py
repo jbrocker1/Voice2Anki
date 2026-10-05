@@ -331,9 +331,6 @@ js_load = """() => {
 css = """
 /* make sure those tabs take all the width */
 #js_widetabs-button { flex-grow: 1 !important;}
-
-/* remove source selector */
-.mic-select {display: none !important; flex-grow:0 !important;}
 """
 
 if shared.big_font:

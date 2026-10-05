@@ -14,6 +14,8 @@ try:
 except Exception:
     from .typechecker import optional_typecheck
 
+from . import model_manifest as local_models
+
 # used to print in red
 col_red = "\033[91m"
 col_rst = "\033[0m"
@@ -54,12 +56,24 @@ class SharedModule:
     user_chains: Optional[Callable] = None
     anki_notetype: Optional[str] = None
 
-    stt_models: List[str] = ["openai:whisper-1", "deepgram:nova-2"]
+    # local (offline, no API key) choices come first, so they are what a fresh
+    # install lands on; every cloud model stays selectable below them.
+    stt_models: List[str] = [
+            *local_models.STT.keys(),
+            "openai:whisper-1",
+            "deepgram:nova-2",
+            ]
 
-    llm_info: dict = {k: v for k, v in litellm.model_cost.items()}
+    # local entries are shaped like litellm.model_cost rows so the dropdown,
+    # the token-limit check and the cost accounting need no special case.
+    llm_info: dict = {
+            **{choice: local_models.local_llm_info(choice) for choice in local_models.LLM},
+            **{k: v for k, v in litellm.model_cost.items()},
+            }
 
     # embeddings are so cheap I don't even count the number of tokens
     embedding_models: List[str] = [
+            *local_models.EMBED.keys(),
             "openai/text-embedding-3-large",
             "openai/text-embedding-3-small",
             "mistral/mistral-embed",

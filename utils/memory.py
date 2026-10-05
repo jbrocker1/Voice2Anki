@@ -22,6 +22,7 @@ from dataclasses import MISSING
 from .logger import whi, red, yel, trace, Timeout, smartcache
 from .shared_module import shared
 from .typechecker import optional_typecheck
+from . import local_embeddings
 
 # string at the end of the prompt
 prompt_finish = "\n\n###\n\n"
@@ -31,7 +32,11 @@ REG_THINKING = re.compile("<thinking>.*?</thinking>", flags=re.DOTALL|re.MULTILI
 # used to count the number of tokens for chatgpt
 @optional_typecheck
 def tkn_len(message: str) -> int:
-    return litellm.token_counter(model=shared.pv["llm_choice"], text=message)
+    # local models are counted with their own tokenizer (llama.cpp), everything
+    # else with litellm's table
+    from .local_llm import count_tokens
+
+    return count_tokens(shared.pv["llm_choice"], message)
 
 # RTOML_NONEVALUE="THISISARTOMLNONEVALUE1234567890"
 
@@ -134,27 +139,32 @@ def embedder(
 
     batchsize = 100
     api_base =  None
-    if model.startswith("openai"):
-        batchsize = 1500
-    elif model.startswith("mistral"):
-        batchsize = 200
-    elif model.startswith("ollama"):
-        batchsize = 100
-        assert "OLLAMA_HOST" in os.environ, "When using ollama, a OLLAMA_HOST env variable on the client is needed"
-        api_base = os.environ["OLLAMA_HOST"]
-        assert api_base, "When using ollama, a OLLAMA_HOST env variable on the client is needed"
+    if local_embeddings.is_local_embed(model):
+        # fastembed, CPU-only on purpose (see local_embeddings): returns the
+        # same (1, dim) shape as the cloud branches, so the tail is shared.
+        vec = local_embeddings.embed(model, text_list)
+    else:
+        if model.startswith("openai"):
+            batchsize = 1500
+        elif model.startswith("mistral"):
+            batchsize = 200
+        elif model.startswith("ollama"):
+            batchsize = 100
+            assert "OLLAMA_HOST" in os.environ, "When using ollama, a OLLAMA_HOST env variable on the client is needed"
+            api_base = os.environ["OLLAMA_HOST"]
+            assert api_base, "When using ollama, a OLLAMA_HOST env variable on the client is needed"
 
-    vec = litellm.embedding(
-        model=model,
-        input=text_list,
-        api_base=api_base,
-    )
-    vec = vec.to_dict()["data"]
+        vec = litellm.embedding(
+            model=model,
+            input=text_list,
+            api_base=api_base,
+        )
+        vec = vec.to_dict()["data"]
 
-    vec = [
-        np.array(v["embedding"]).squeeze().reshape(1, -1)
-        for v in vec
-    ]
+        vec = [
+            np.array(v["embedding"]).squeeze().reshape(1, -1)
+            for v in vec
+        ]
     if L2_norm:
         vec = [(v / np.linalg.norm(v)).reshape(1, -1) for v in vec]
 
@@ -242,6 +252,37 @@ def check_prompts(prev_prompts: List[dict], less_verbose: bool = False) -> List[
     return prev_prompts
 
 
+#: Two starter examples. The app teaches its own output format through the
+#: example cards stored in memories.json (the system prompt only says "match the
+#: format of the previous examples"), so a brand new profile has nothing to copy.
+#: Small local models in particular produce markdown tables or echo the input
+#: when given zero examples, and the memory filter is built around at least two.
+SEED_EXAMPLES = [
+    (
+        "You are studying human physiology.\n"
+        "The sinoatrial node is the heart's natural pacemaker and initiates each heartbeat.",
+        "The {{c1::sinoatrial node}} is the heart's natural pacemaker and initiates each heartbeat.",
+    ),
+    (
+        "You are studying human physiology.\n"
+        "Mitochondria produce ATP through oxidative phosphorylation in the inner membrane.",
+        "Mitochondria produce {{c1::ATP}} through oxidative phosphorylation in the inner membrane.",
+    ),
+]
+
+
+def _as_embedding_matrix(embeddings: List[np.ndarray]) -> np.ndarray:
+    """Stack embedder output into a 2-D (n_texts, n_features) matrix.
+
+    ``embedder`` returns one ``(1, features)`` array per text. ``np.squeeze()``
+    used to collapse those, which silently turns a single example into a 1-D
+    vector and makes sklearn's cosine_similarity raise a reshape error. Keeping
+    the batch axis makes the 1-example case behave like any other.
+    """
+    stacked = np.asarray(embeddings)
+    return stacked.reshape(len(embeddings), -1)
+
+
 #@Timeout(30)
 @optional_typecheck
 @trace
@@ -255,10 +296,11 @@ def prompt_filter(
     correctness of the key/values, then returns only what's under the maximum
     number of tokens for model. Also disregard prompts marked as disabled."""
     whi("Filtering prompts")
-    if "mistral" in shared.pv["choice_embed"] and not shared.pv["txt_mistral_api_key"]:
-        raise Exception("You want to use Mistral for embeddings but haven't supplied an API key in the settings.")
-    elif "openai" in shared.pv["choice_embed"] and not shared.pv["txt_openai_api_key"]:
-        raise Exception("You want to use OpenAI for embeddings but haven't supplied an API key in the settings.")
+    if not local_embeddings.is_local_embed(shared.pv["choice_embed"]):
+        if "mistral" in shared.pv["choice_embed"] and not shared.pv["txt_mistral_api_key"]:
+            raise Exception("You want to use Mistral for embeddings but haven't supplied an API key in the settings.")
+        elif "openai" in shared.pv["choice_embed"] and not shared.pv["txt_openai_api_key"]:
+            raise Exception("You want to use OpenAI for embeddings but haven't supplied an API key in the settings.")
 
     for pr in prev_prompts:
         assert "role" in pr, f"No role key found in pr:\n{pr}"
@@ -293,11 +335,24 @@ def prompt_filter(
 
     assert tkns <= max_token, f"The number of tokens including only the system prompt and the current prompt ({tkns}) is already above the max threshold ({max_token}). Please increase max_token"
 
+    # A profile that never generated a card yet has no examples to pick from.
+    # Everything below (priority/keyword/embedding scoring) assumes at least one
+    # candidate, so return nothing and let the caller send just the system prompt
+    # plus the current transcript.
+    if not candidate_prompts:
+        whi("No example memory yet for this profile, prompting without examples")
+        return []
+
     # score based on priority. Closer to 1 means higher chances of being picked
     max_prio = max([pr["priority"] for pr in candidate_prompts])
     min_prio = min([pr["priority"] for pr in candidate_prompts])
+    # Every example added through the GUI starts at the same priority, so the
+    # span is regularly 0: that axis simply carries no signal, it must not be a
+    # ZeroDivisionError.
+    prio_span = max_prio - min_prio
     for i, pr in enumerate(candidate_prompts):
-        candidate_prompts[i]["priority_score"] = (pr["priority"] - min_prio) / (max_prio - min_prio)
+        candidate_prompts[i]["priority_score"] = \
+            ((pr["priority"] - min_prio) / prio_span) if prio_span else 0.0
 
     # score based on timestamp. Closer to 1 means more recent so higher chances of being picked
     times = sorted([pr["timestamp"] for pr in candidate_prompts])
@@ -374,14 +429,14 @@ def prompt_filter(
 
 
     assert len(embeddings_contents) == len(embeddings_answers), f"len(embeddings_contents)={len(embeddings_contents)} but len(embeddings_answers)={len(embeddings_answers)}"
-    sim_content = (cosine_similarity(new_prompt_vec, np.array(embeddings_contents).squeeze()) + 1) / 2
-    sim_answer = (cosine_similarity(new_prompt_vec, np.array(embeddings_answers).squeeze()) + 1) / 2
+    sim_content = (cosine_similarity(new_prompt_vec, _as_embedding_matrix(embeddings_contents)) + 1) / 2
+    sim_answer = (cosine_similarity(new_prompt_vec, _as_embedding_matrix(embeddings_answers)) + 1) / 2
     assert np.max(sim_content) <= 1, f"Max similarity is above 1: {np.max(sim_content)}"
     assert np.min(sim_content) >= 0, f"Min similarity is below 0: {np.min(sim_content)}"
     assert np.max(sim_answer) <= 1, f"Max similarity is above 1: {np.max(sim_answer)}"
     assert np.min(sim_answer) >= 0, f"Min similarity is below 0: {np.min(sim_answer)}"
     w1, w2 = 3, 1
-    sim_combined = ((sim_content * w1 + sim_answer * w2) / (w1 + w2)).squeeze()
+    sim_combined = ((sim_content * w1 + sim_answer * w2) / (w1 + w2)).reshape(-1)
 
     max_sim = [sim_combined.max(), candidate_prompts[sim_combined.argmax()]["content"]]
     min_sim = [sim_combined.min(), candidate_prompts[sim_combined.argmin()]["content"]]
@@ -391,7 +446,11 @@ def prompt_filter(
 
     # scaling
     sim_combined -= sim_combined.min()
-    sim_combined /= sim_combined.max()
+    # A single example, or several equally similar ones, leaves nothing to scale
+    # by: min-max then divides by 0 and poisons every downstream score with nan.
+    sim_span = sim_combined.max()
+    if sim_span > 0:
+        sim_combined /= sim_span
     for i in range(len(candidate_prompts)):
         candidate_prompts[i]["content_sim"] = float(sim_combined[i].squeeze())
     assert len(candidate_prompts) == len(list(sim_combined)), "Unexpected list length"
@@ -432,6 +491,7 @@ def prompt_filter(
             exit_while = True
             break
 
+        added_this_pass = 0
         for pr_idx, pr in enumerate(picksorted):
             if pr in output_pr:
                 continue
@@ -458,18 +518,28 @@ def prompt_filter(
 
             tkns += pr["tkn_len_in"] + pr["tkn_len_out"]
             output_pr.append(pr)
+            added_this_pass += 1
 
         if exit_while:
+            break
+        if not added_this_pass:
+            # Nothing new is diverse enough or still fits in the budget. Without
+            # this the loop just spins until max_iter on a small profile.
             break
 
     red(f"Tokens of the kept prompts after {cnt} iterations: {tkns} (of all prompts: {all_tkns} tokens)")
     yel(f"Total number of prompts saved in memories: '{len(prev_prompts)}'")
 
-    assert len(output_pr) >= 2, f"Found only {len(output_pr)} prompts after filtering, this is suspiciously low."
+    if len(output_pr) < 2:
+        # A young profile legitimately may not have two distinct examples yet
+        # (or the token budget only leaves room for one). That makes for a
+        # poorer prompt, not a broken run.
+        whi(f"Only {len(output_pr)} example(s) available for this profile")
 
 
     output_pr = sorted(output_pr, key=lambda x: x["pick_score"])
-    assert output_pr[1]["pick_score"] <= output_pr[-1]["pick_score"], f"Unexpected pick_score ordering: {output_pr}"
+    if len(output_pr) >= 2:
+        assert output_pr[1]["pick_score"] <= output_pr[-1]["pick_score"], f"Unexpected pick_score ordering: {output_pr}"
     # or by timestamp (most recent last):
     # output_pr = sorted(output_pr, key=lambda x: x["timestamp"])
     # or by priority:
@@ -592,7 +662,24 @@ def load_prev_prompts(profile: str) -> List[dict]:
         #         gr.Warning(red(f"Error when checking toml vs json: '{err}'"))
     else:
         red(f"No memories in profile {profile} found, creating it")
-        prev_prompts = check_prompts([default_system_prompt.copy()])
+        # Seed the few-shot examples rather than the system prompt: those are the
+        # only place the expected card format lives, and both check_prompts() and
+        # prompt_filter() reject a role="system" entry since memories.json holds
+        # user/assistant example pairs only.
+        now = int(time.time())
+        prev_prompts = check_prompts([
+            {
+                "role": "user",
+                "content": content,
+                "answer": answer,
+                "timestamp": now - i,
+                "priority": 0,
+                "disabled": False,
+                "disabled_note": "",
+            }
+            for i, (content, answer) in enumerate(reversed(SEED_EXAMPLES))
+        ], less_verbose=True)
+        mem_file.parent.mkdir(parents=True, exist_ok=True)
         with mem_file.open("w") as f:
             json.dump(prev_prompts, f, indent=4, ensure_ascii=False)
         # with open(f"profiles/{profile}/memories.toml", "w") as f:

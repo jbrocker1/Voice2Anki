@@ -225,7 +225,9 @@ def start_Voice2Anki(
                 allowed_paths=["/tmp/gradio"],
                 **ssl_args,
                 )
-        return demo
+        # returning the Blocks object makes fire call it again after Ctrl+C,
+        # which explodes with an IndexError inside gradio: return None instead
+        return None
     else:
         whi("Not launching GUI, using cli mode")
         from utils.cli import Cli

@@ -98,6 +98,15 @@ python Voice2Anki.py --help
 2. Enter a profile name in the `profile` field (this loads default settings)
 3. Configure your API key in the settings
 4. Pick an LLM in the `LLM` dropdown on the `Memories & Buffer` tab — the built-in default is a placeholder entry, so cards cannot be generated until you choose a real model
+5. Fill the `LLM context` box on the `Controls` tab (e.g. "I'm learning Japanese; make cloze cards from what I record") — Alfred refuses to generate cards without it
+6. Pick or type a `Deck name` and `Tags` in the `Anki` settings tab — `Ankify` refuses to send cards without them
+
+### Troubleshooting: recordings come out silent
+Windows' own mic test can pass while the browser records pure silence, because the browser may be capturing a different or blocked input:
+* **Windows privacy gate**: Settings → Privacy & security → Microphone → make sure **"Let desktop apps access your microphone"** is ON. The master toggle alone is not enough: browsers count as desktop apps, and the OS mic test bypasses this gate.
+* **Wrong input device**: in Chrome check `chrome://settings/content/microphone` (Edge: `edge://settings/content/microphone`) and make sure your *real* microphone is selected — not a virtual one. Machines with Voicemeeter, NVIDIA Broadcast or OBS virtual audio devices expose several silent virtual inputs, and the browser does not always default to the real mic.
+* Each audio slot also has a **"Select input device"** dropdown to pick the mic per recording.
+* Quick isolation test: open any browser-based mic test page in the same browser — if it is silent there too, the problem is browser/OS-level, not Voice2Anki.
 
 ### Optional Anki Syncing
 Syncing is entirely optional and Voice2Anki starts fine without it.
