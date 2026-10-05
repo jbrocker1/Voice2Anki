@@ -2,7 +2,7 @@ import os
 from joblib import Memory
 from OCR_with_format import OCR_with_format
 
-from .logger import yel, trace, smartcache, cache_dir
+from .logger import yel, smartcache, cache_dir
 from .typechecker import optional_typecheck
 
 memory = Memory(cache_dir / "ocr_cache", verbose=0)
@@ -10,7 +10,6 @@ memory = Memory(cache_dir / "ocr_cache", verbose=0)
 ocr_engine = OCR_with_format()
 
 @optional_typecheck
-@trace
 @smartcache
 @memory.cache
 def get_text(

@@ -19,7 +19,7 @@ import litellm
 from sklearn.metrics.pairwise import cosine_similarity
 from dataclasses import MISSING
 
-from .logger import whi, red, yel, trace, Timeout, smartcache
+from .logger import whi, red, yel, deb, Timeout, smartcache
 from .shared_module import shared
 from .typechecker import optional_typecheck
 from . import local_embeddings
@@ -81,7 +81,6 @@ expected_mess_keys = ["role", "content", "timestamp", "priority", "tkn_len_in", 
 def hasher(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:10]
 
-@trace
 @optional_typecheck
 @smartcache
 def embedder(
@@ -105,19 +104,16 @@ def embedder(
     assert len(cached_values) == len(text_list)
     if not any(c is MISSING for c in cached_values):
         assert depth == 0, f"depth of 0 but no MISSING embeddings: text_list is\n{text_list}"
-        if not shared.disable_tracing:
-            red(f"All {len(text_list)} embeddings are already cached, returning them.")
+        deb(f"All {len(text_list)} embeddings are already cached, returning them.")
         return cached_values
     elif all(c is MISSING for c in cached_values):
         assert depth in [0, 1]
-        if not shared.disable_tracing:
-            red(f"No cached_values found in embedder. Will compute {len(text_list)} embeddings (depth={depth})")
+        deb(f"No cached_values found in embedder. Will compute {len(text_list)} embeddings (depth={depth})")
     else:
         assert depth == 0
         todo = [t for i, t in enumerate(text_list) if cached_values[i] is MISSING]
         assert len(todo) <= len(text_list)
-        if not shared.disable_tracing:
-            red(f"Detected {len(todo)} uncached texts among {len(text_list)}")
+        deb(f"Detected {len(todo)} uncached texts among {len(text_list)}")
 
         new_vals = embedder(
             text_list=todo,
@@ -188,7 +184,6 @@ def embedder(
 
 
 @optional_typecheck
-@trace
 def check_prompts(prev_prompts: List[dict], less_verbose: bool = False) -> List[dict]:
     "checks validity of the previous prompts"
     whi("Checking prompt validity")
@@ -285,7 +280,6 @@ def _as_embedding_matrix(embeddings: List[np.ndarray]) -> np.ndarray:
 
 #@Timeout(30)
 @optional_typecheck
-@trace
 def prompt_filter(
     prev_prompts: List[dict],
     max_token: Union[int, float],
@@ -440,9 +434,8 @@ def prompt_filter(
 
     max_sim = [sim_combined.max(), candidate_prompts[sim_combined.argmax()]["content"]]
     min_sim = [sim_combined.min(), candidate_prompts[sim_combined.argmin()]["content"]]
-    if not shared.disable_tracing:
-        whi(f"Memory with lowest similarity is: {round(min_sim[0], 4)} '{min_sim[1]}'")
-        whi(f"Memory with highest similarity is: {round(max_sim[0], 4)} '{max_sim[1]}'")
+    deb(f"Memory with lowest similarity is: {round(min_sim[0], 4)} '{min_sim[1]}'")
+    deb(f"Memory with highest similarity is: {round(max_sim[0], 4)} '{max_sim[1]}'")
 
     # scaling
     sim_combined -= sim_combined.min()
@@ -555,7 +548,6 @@ def prompt_filter(
 
 
 @optional_typecheck
-@trace
 def recur_improv(txt_profile: str, txt_audio: str, txt_whisp_prompt: str, txt_chatgpt_outputstr: str, txt_context: str, priority: int, llm_choice: str):
     whi("Recursively improving")
     if not txt_audio:
@@ -641,7 +633,6 @@ def cached_load_memories(path: str, modtime: float) -> List[dict]:
     return d
 
 @optional_typecheck
-@trace
 def load_prev_prompts(profile: str) -> List[dict]:
     assert Path("profiles/").exists(), "profile directory not found"
     mem_file = Path(f"profiles/{profile}/memories.json")
@@ -711,7 +702,6 @@ def display_price(sld_max_tkn: int, llm_choice: str) -> str:
     return message
 
 @optional_typecheck
-@trace
 def get_memories_df(profile: str) -> pd.DataFrame:
     memories = load_prev_prompts(profile).copy()
     if not memories:
@@ -726,7 +716,6 @@ def get_memories_df(profile: str) -> pd.DataFrame:
     return pd.DataFrame(memories).reset_index().set_index("n")
 
 @optional_typecheck
-@trace
 def get_message_buffer_df() -> pd.DataFrame:
     buffer = shared.message_buffer
     if not buffer:
@@ -737,14 +726,12 @@ def get_message_buffer_df() -> pd.DataFrame:
     return pd.DataFrame(buffer).reset_index().set_index("n")
 
 @optional_typecheck
-@trace
 def get_dirload_df() -> pd.DataFrame:
     df = shared.dirload_queue
     # make sure that the index 'n' appears first
     df = df.reset_index().set_index("n").reset_index()
     return df
 
-@trace
 @optional_typecheck
 def split_thinking(prompt: str) -> Tuple[str, str]:
     orig_prompt = copy.deepcopy(prompt)

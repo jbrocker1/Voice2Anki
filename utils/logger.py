@@ -55,13 +55,22 @@ file_handler = handlers.RotatingFileHandler(
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(log_formatter)
 
-log = logging.getLogger()
-log.setLevel(logging.INFO)
-log.addHandler(file_handler)
+# the file handler lives on the root logger so that third-party INFO
+# records (litellm/openai HTTP chatter) also land in the file, where
+# get_log reads them (it already filters the noisy ones out)
+root_log = logging.getLogger()
+root_log.setLevel(logging.INFO)
+root_log.addHandler(file_handler)
+
+# everything the app logs itself flows through this named logger so the
+# level of app messages can be controlled without touching third-party
+# logs: standard levels by default, DEBUG with --debug (see enable_debug)
+app_logger = logging.getLogger("Voice2Anki")
+app_logger.setLevel(logging.INFO)
 log_regex = re.compile(" ##.*?##")
 
 mess = f"This is a test to check wether the logging works: {time.time()}"
-log.info(mess)
+root_log.info(mess)
 assert mess in log_file.read_text().splitlines()[-1], "Logs does not appear to be working"
 
 colors = {
@@ -146,13 +155,16 @@ def print_db(db_filename: str) -> str:
 
 
 @optional_typecheck
-def get_coloured_logger(color_asked: str) -> Callable:
-    """used to print color coded logs"""
+def get_coloured_logger(color_asked: str, level: int = logging.INFO) -> Callable:
+    """build a printer that logs through the standard logging module at the
+    given level: the message reaches the rotating file log with a real level
+    and is printed to the console with its color only while that level is
+    enabled. Returns its input unchanged so it can be used inline, e.g.
+    `return red("Too few words...")`.
+    """
     col = colors[color_asked]
 
-    # all logs are considered "errors" otherwise the datascience libs just
-    # overwhelm the logs
-    def printer(string: Any, **args) -> str:
+    def printer(string: Any, **args) -> Any:
         inp = string
         if isinstance(string, dict):
             try:
@@ -171,8 +183,11 @@ def get_coloured_logger(color_asked: str) -> Callable:
                 string = string.__str__()
             except:
                 string = string.__repr__()
-        log.info(string)
-        tqdm.write(col + string + colors["reset"], **args)
+        # a real level in the file log through the standard logging module
+        app_logger.log(level, string)
+        if app_logger.isEnabledFor(level):
+            # routed through tqdm so that progress bars are not torn apart
+            tqdm.write(col + string + colors["reset"], **args)
         return inp
     return printer
 
@@ -215,55 +230,26 @@ latest_tail = None
 last_log_content = None
 
 
-whi = get_coloured_logger("white")
-yel = get_coloured_logger("yellow")
-red = get_coloured_logger("red")
+whi = get_coloured_logger("white", level=logging.INFO)
+yel = get_coloured_logger("yellow", level=logging.WARNING)
+red = get_coloured_logger("red", level=logging.ERROR)
 purp = get_coloured_logger("purple")
 ital = get_coloured_logger("italic")
 bold = get_coloured_logger("bold")
 underline = get_coloured_logger("underline")
 high_vis = get_coloured_logger("high_vis")
 very_high_vis = get_coloured_logger("very_high_vis")
+# tracing-style diagnostics: silent on the console and in the file until
+# enable_debug() lowers the level to DEBUG (--debug)
+deb = get_coloured_logger("italic", level=logging.DEBUG)
+
 
 @optional_typecheck
-def trace(func: Callable) -> Callable:
-    """simple wrapper to use as decorator to print when a function is used
-    and for how long.
-    Note: wrapping functions is not currently compatible with
-        gradio's evt: gr.EventData
-    """
-    if shared.disable_tracing:
-        return func
-    if asyncio.iscoroutinefunction(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            ital(f"-> Entering {func}")
-            # purp(f"-> Entering {func} {args} {kwargs}")
-            t = time.time()
-            result = await func(*args, **kwargs)
-            tt = time.time() - t
-            if tt > 0.5:
-                red(f"    Exiting {func} after {tt:.1f}s")
-            else:
-                ital(f"   Exiting {func} after {tt:.1f}s")
-            return result
-    else:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            ital(f"-> Entering {func}")
-            # purp(f"-> Entering {func} {args} {kwargs}")
-            t = time.time()
-            if args:
-                result = func(*args, **kwargs)
-            else:
-                result = func(**kwargs)
-            tt = time.time() - t
-            if tt > 0.5:
-                red(f"    Exiting {func} after {tt:.1f}s")
-            else:
-                ital(f"   Exiting {func} after {tt:.1f}s")
-            return result
-    return wrapper
+def enable_debug() -> None:
+    """--debug: lower the app logger and the file handler to DEBUG so that
+    deb() diagnostics show up on the console and in the file log."""
+    app_logger.setLevel(logging.DEBUG)
+    file_handler.setLevel(logging.DEBUG)
 
 
 @optional_typecheck

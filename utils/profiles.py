@@ -16,11 +16,11 @@ from dataclasses import MISSING
 import gradio as gr
 
 try:
-    from .logger import whi, yel, red, trace
+    from .logger import whi, yel, red
     from .shared_module import shared
     from .typechecker import optional_typecheck
 except Exception:
-    from logger import whi, yel, red, trace
+    from logger import whi, yel, red
     from shared_module import shared
     from typechecker import optional_typecheck
 
@@ -86,7 +86,6 @@ class ValueStorage:
         else:
             raise Exception("Tried to create another instance of ValueStorage")
 
-    @trace
     def __init__(self, profile: str = "latest") -> None:
 
         profile = profile.strip()
@@ -124,7 +123,6 @@ class ValueStorage:
         for key in profile_keys:
             @optional_typecheck
             def create_save_method(key: str) -> Callable:
-                #@trace
                 @optional_typecheck
                 def save_method(value) -> None:
                     self.__setitem__(key, value)
@@ -338,7 +336,6 @@ def worker_setitem(in_queues: dict) -> None:
                         red(f"Error when setting {kf}: '{err}'")
 
 
-# @trace
 @optional_typecheck
 def get_profiles() -> List[str]:
     profiles = [str(p.name) for p in profile_path.iterdir()]
@@ -349,7 +346,6 @@ def get_profiles() -> List[str]:
 
 
 @optional_typecheck
-@trace
 def switch_profile(profile: str) -> Tuple[
     Optional[str],
     Optional[str],
@@ -516,7 +512,7 @@ def call_user_chain(txt_audio: str, evt: gr.EventData) -> str:
     i_ch = int(evt.target.elem_id.split("#")[1])
     chain = shared.user_chains[i_ch]
     assert chain is not None
-    func = trace(chain["func"])
+    func = chain["func"]
     txt_audio = func(txt_audio)
     assert isinstance(txt_audio, str), f"Output of user chain must be a string, not {type(txt_audio)}. Value: {txt_audio}"
     return txt_audio

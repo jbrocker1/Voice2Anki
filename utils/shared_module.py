@@ -43,7 +43,6 @@ class SharedModule:
     client_type: str = MISSING   # gui or cli
     anki_media: Optional[PosixPath] = None
     debug: Optional[bool] = None
-    disable_tracing: Optional[bool] = None
     disable_timeout: Optional[bool] = None
     disable_smartcache: Optional[bool] = None
     widen_screen: Optional[bool] = None

@@ -9,7 +9,7 @@ import faulthandler
 import traceback
 
 from utils.typechecker import optional_typecheck, beartype
-from utils.logger import whi, yel, red, print_db
+from utils.logger import whi, yel, red, print_db, enable_debug
 from utils.shared_module import shared
 
 
@@ -33,7 +33,6 @@ def start_Voice2Anki(
     localnetwork: bool = False,
     use_ssl: bool = True,
     anki_media_folder: Optional[Union[str, PosixPath]] = None,
-    disable_tracing: bool = False,
     disable_timeout: bool = True,
     disable_smartcache: bool = False,
     widen_screen: bool = True,
@@ -70,9 +69,6 @@ def start_Voice2Anki(
         Disable if share is used as self signed certificate mess with it.
     anki_media_folder: str, default None
         optional anki media database location
-    disable_tracing: bool, default False
-        if True, disables the decorator that indicates which function were
-        called
     disable_timeout: bool, default True
         if True, disables the decorator that creates a thread used for
         timeout of long functions
@@ -156,7 +152,8 @@ def start_Voice2Anki(
     shared.audio_slot_nb = nb_audio_slots
     shared.anki_media = anki_media_folder
     shared.debug = debug
-    shared.disable_tracing = disable_tracing
+    if debug:
+        enable_debug()
     shared.disable_timeout = disable_timeout
     shared.disable_smartcache = disable_smartcache
     shared.widen_screen = widen_screen

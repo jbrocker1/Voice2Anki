@@ -29,7 +29,7 @@ from deepgram import DeepgramClient
 
 from .anki_utils import add_note_to_anki, add_audio_to_anki
 from .shared_module import shared
-from .logger import red, whi, yel, store_to_db, trace, Timeout, smartcache, Critical
+from .logger import red, whi, yel, store_to_db, Timeout, smartcache, Critical
 from .memory import prompt_filter, load_prev_prompts, tkn_len, transcript_template, default_system_prompt, split_thinking
 from .media import sound_preprocessing, get_img_source, format_audio_component, rgb_to_bgr
 from .profiles import ValueStorage
@@ -119,7 +119,6 @@ llm_cache = joblib.Memory("cache/llm_cache", verbose=0)
 # store in a dict to avoid recreating an instance each time
 deepgram_clients = {}
 
-@trace
 @optional_typecheck
 def clear_cache() -> None:
     # reset the llm and stt cache to make sure shared.llm_to_db_buffer is up to date
@@ -127,7 +126,6 @@ def clear_cache() -> None:
     stt_cache.clear()
 
 
-@trace
 @optional_typecheck
 def pop_buffer() -> None:
     "remove the latest card from message buffer"
@@ -178,7 +176,6 @@ def split_txt_audio(txt_audio: str) -> str:
 
 @floatizer
 @optional_typecheck
-@trace
 @smartcache
 @stt_cache.cache(ignore=["audio_path"])
 def whisper_cached(
@@ -341,7 +338,6 @@ def whisper_cached(
 
 
 @optional_typecheck
-@trace
 def thread_whisp_then_llm(audio_mp3: Optional[Union[PosixPath, str]]) -> None:
     """run whisper on the audio and return nothing. This is used to cache in
     advance and in parallel the transcription."""
@@ -406,7 +402,6 @@ def thread_whisp_then_llm(audio_mp3: Optional[Union[PosixPath, str]]) -> None:
 
 
 @optional_typecheck
-@trace
 def transcribe(audio_mp3_1: Optional[Union[List[Union[str, dict]], str, dict]]) -> str:
     "turn the 1st audio track into text"
     whi("Transcribing audio")
@@ -481,7 +476,6 @@ def transcribe(audio_mp3_1: Optional[Union[List[Union[str, dict]], str, dict]]) 
 
 
 @optional_typecheck
-@trace
 def flag_audio(
         txt_profile: str,
         txt_audio: str,
@@ -566,7 +560,6 @@ def flag_audio(
 
 @stripizer
 @optional_typecheck
-@trace
 def pre_alfred(
         txt_audio: str,
         txt_chatgpt_context: str,
@@ -765,7 +758,6 @@ async def async_parallel_alfred(splits, *args, **kwargs):
 @stripizer
 @floatizer
 @optional_typecheck
-@trace
 @smartcache
 @Timeout(lambda: 900 if local_llm.is_local_llm(shared.pv["llm_choice"]) else 60)
 @llm_cache.cache(ignore=["cache_mode"])
@@ -944,7 +936,6 @@ def alfred(
 
 
 @optional_typecheck
-@trace
 @Critical
 def dirload_splitted(checkbox: bool, *audios: Optional[Union[List, bool]]) -> List[Union[dict, gr.Audio, str, bool, None]]:
     """
@@ -1096,7 +1087,6 @@ def dirload_splitted(checkbox: bool, *audios: Optional[Union[List, bool]]) -> Li
     return output
 
 @optional_typecheck
-@trace
 @Critical
 def dirload_splitted_last(checkbox: bool) -> Union[str, gr.Audio, dict, None]:
     """wrapper for dirload_splitted to only load the last slot. This is faster
@@ -1106,7 +1096,6 @@ def dirload_splitted_last(checkbox: bool) -> Union[str, gr.Audio, dict, None]:
     return new_audio
 
 @optional_typecheck
-@trace
 def audio_edit(
         audio: Union[str, dict],
         audio_txt: str,
@@ -1272,7 +1261,6 @@ def audio_edit(
     return cloz, None, None
 
 @optional_typecheck
-@trace
 def gather_threads(thread_keys: List[str]) -> None:
     n_running = {k: sum([t.is_alive() for t in threads]) for k, threads in shared.running_threads.items() if k == thread_keys}
     i = 0
@@ -1287,7 +1275,6 @@ def gather_threads(thread_keys: List[str]) -> None:
         time.sleep(0.1)
 
 @optional_typecheck
-@trace
 def wait_for_queue(q: queue.Queue, source: str, t=1):
     "source : https://stackoverflow.com/questions/19206130/does-queue-get-block-main"
     start = time.time()
@@ -1303,7 +1290,6 @@ def wait_for_queue(q: queue.Queue, source: str, t=1):
 
 
 @optional_typecheck
-@trace
 def kill_threads() -> None:
     """the threads in timeout are stored in the shared module, if they
     get replaced by None the threads will be ignored.
@@ -1321,7 +1307,6 @@ def kill_threads() -> None:
 
 
 @optional_typecheck
-@trace
 def Voice2Anki_db_save(
         txt_chatgpt_cloz: str,
         txt_chatgpt_context: str,
@@ -1384,7 +1369,6 @@ def Voice2Anki_db_save(
 
 
 @optional_typecheck
-@trace
 def to_anki(
         audio_mp3_1: Optional[Union[dict, str]],
         txt_audio: Optional[str],

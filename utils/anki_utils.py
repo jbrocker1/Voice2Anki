@@ -19,7 +19,7 @@ from cache import AsyncTTL
 
 from dataclasses import MISSING
 
-from .logger import red, whi, trace, Timeout
+from .logger import red, whi, Timeout
 from .shared_module import shared
 from .media import format_audio_component
 from .typechecker import optional_typecheck
@@ -41,7 +41,6 @@ async def anki_request_async(url: str, request: str) -> dict:
             return await response.json()
 
 @optional_typecheck
-@trace
 def check_anki_models() -> None:
     """checks for notetype in anki, if no appropriate model is found, create
     one"""
@@ -71,7 +70,6 @@ def check_anki_models() -> None:
 
 
 @optional_typecheck
-@trace
 def add_note_to_anki(
         bodies: List[str],
         source: str,
@@ -121,7 +119,6 @@ def add_note_to_anki(
 
 
 @optional_typecheck
-@trace
 def add_audio_to_anki(audio_mp3: Union[str, dict], queue: queue.Queue) -> None:
     whi("Sending audio to anki")
     try:
@@ -172,7 +169,6 @@ def add_audio_to_anki(audio_mp3: Union[str, dict], queue: queue.Queue) -> None:
     except Exception as err:
         queue.put(red(f"\n\nError when copying audio to anki media: '{err}'"))
 
-@trace
 @cache
 @optional_typecheck
 def cached_load_flashcard_editor(path: PosixPath, ctime: float) -> Callable:
@@ -186,7 +182,6 @@ def cached_load_flashcard_editor(path: PosixPath, ctime: float) -> Callable:
     cloze_editor = editor_module.cloze_editor
     return cloze_editor
 
-# @trace
 @optional_typecheck
 @AsyncTTL(maxsize=10000, time_to_live=120)
 async def cached_get_anki_content(nid: Union[int, str]) -> Coroutine:
@@ -196,7 +191,6 @@ async def cached_get_anki_content(nid: Union[int, str]) -> Coroutine:
 def remove_markers(intext: str) -> str:
     return intext.replace("{{c", "").replace("}}", "").replace("::", "")
 
-@trace
 @Timeout(5)
 @optional_typecheck
 async def get_card_status(txt_chatgpt_cloz: str) -> str:
@@ -325,7 +319,6 @@ async def get_card_status(txt_chatgpt_cloz: str) -> str:
 
 
 @optional_typecheck
-@trace
 async def sync_anki() -> None:
     "trigger anki synchronization"
     try:
@@ -346,7 +339,6 @@ async def sync_anki() -> None:
 
 
 @optional_typecheck
-@trace
 async def mark_previous_note() -> None:
     "add or remove the tag 'marked' to the latest added notes."
     if not shared.added_note_ids:
@@ -377,7 +369,6 @@ async def mark_previous_note() -> None:
         gr.Warning(red(f"Marked anki notes: {','.join([str(n) for n in nids])}\nBodies:\n{bodies}"))
 
 @optional_typecheck
-@trace
 async def add_to_more_of_previous_note(more_content: str) -> None:
     "add or remove the tag 'marked' to the latest added notes."
     if not shared.added_note_ids:
@@ -401,7 +392,6 @@ async def add_to_more_of_previous_note(more_content: str) -> None:
     gr.Warning(red(f"Edited anki notes 'more' field: {','.join([str(n) for n in nids])}\nBodies:\n{bodies}"))
 
 @optional_typecheck
-@trace
 async def suspend_previous_notes() -> None:
     "suspend the latest added notes."
     if not shared.added_note_ids:
@@ -462,7 +452,6 @@ async def get_anki_content(nid: List[Union[str, int]]) -> List[str]:
         return [inf["fields"][first_field]["value"] for inf in infos]
 
 
-# @trace
 @optional_typecheck
 def get_anki_tags() -> List[str]:
     try:
@@ -473,7 +462,6 @@ def get_anki_tags() -> List[str]:
         return [red(f"Error when getting list of anki tags: {err}'")]
 
 
-# @trace
 @optional_typecheck
 def get_decks() -> List[str]:
     try:

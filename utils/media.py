@@ -21,7 +21,7 @@ import hashlib
 import copy
 from PIL import Image
 
-from .logger import whi, red, trace, Timeout
+from .logger import whi, red, Timeout
 from .ocr import get_text
 from .shared_module import shared
 from .typechecker import optional_typecheck
@@ -46,7 +46,6 @@ def is_image_cv2(file_path: Union[str, PosixPath]) -> bool:
     except cv2.error:
         return False
 
-@trace
 @optional_typecheck
 def get_image(gallery) -> Optional[List[Union[gr.Gallery, np.ndarray]]]:
     whi("Getting image from clipboard")
@@ -141,7 +140,6 @@ def get_image(gallery) -> Optional[List[Union[gr.Gallery, np.ndarray]]]:
 
 
 @optional_typecheck
-@trace
 def check_source(source: str) -> str:
     "makes sure the source is only an img"
     whi("Checking source")
@@ -160,7 +158,6 @@ def check_source(source: str) -> str:
 
 
 #@Timeout(120)
-@trace
 @optional_typecheck
 def get_img_source(gallery: Union[List, None], queue=queue.Queue(), use_html: bool = True) -> None:
     whi("Getting source from image")
@@ -244,7 +241,6 @@ def get_img_source(gallery: Union[List, None], queue=queue.Queue(), use_html: bo
         return queue.put(red(f"Error getting source: '{err}' from {gallery}"))
 
 @optional_typecheck
-@trace
 def ocr_image(gallery: Union[List, None]) -> None:
     "use OCR to get the text of an image to display in a textbox"
     q = queue.Queue()
@@ -252,7 +248,6 @@ def ocr_image(gallery: Union[List, None]) -> None:
     return q.get()
 
 
-# @trace
 @optional_typecheck
 def reset_gallery() -> None:
     whi("Reset images.")
@@ -260,7 +255,6 @@ def reset_gallery() -> None:
     assert shared.pv["enable_gallery"], "Incoherent UI"
 
 
-# @trace
 @optional_typecheck
 def reset_audio() -> List[dict]:
     whi("Resetting all audio")
@@ -354,7 +348,6 @@ def apply_sox_chain(seg: AudioSegment, effects: List[list]) -> AudioSegment:
 
 
 @optional_typecheck
-@trace
 def sound_preprocessing(audio_mp3_path: Union[PosixPath, str]) -> PosixPath:
     "removing silence, maybe try to enhance audio, apply filters etc"
     whi(f"Preprocessing {audio_mp3_path}")
@@ -375,7 +368,6 @@ def sound_preprocessing(audio_mp3_path: Union[PosixPath, str]) -> PosixPath:
     return new_path
 
 @optional_typecheck
-@trace
 def force_sound_processing(path: Optional[Union[str, PosixPath]] = None) -> PosixPath:
     """harsher sound processing for the currently loaded next audio. This is
     done if there are some residual long silence that are making whisper
@@ -421,7 +413,6 @@ def force_sound_processing(path: Optional[Union[str, PosixPath]] = None) -> Posi
 
 
 
-# @trace
 @optional_typecheck
 def format_audio_component(
     audio: Union[str, gr.Audio, PosixPath, dict],
@@ -453,7 +444,6 @@ def rgb_to_bgr(image):
 
 
 @optional_typecheck
-@trace
 def roll_queued_galleries(*qg: Optional[List[Union[List, Tuple]]]) -> List[Optional[Union[gr.Gallery, dict, List]]]:
     "pop the first queued gallery and send it to the main gallery"
     assert shared.pv["enable_queued_gallery"], "Incoherent UI"
@@ -469,7 +459,6 @@ def roll_queued_galleries(*qg: Optional[List[Union[List, Tuple]]]) -> List[Optio
 
 
 @optional_typecheck
-@trace
 def qg_add_to_new(*qg) -> List[Optional[Union[gr.Gallery, dict, List]]]:
     """triggered by a shortcut, will add from clipboard the image to
     a new queued gallery"""
@@ -486,7 +475,6 @@ def qg_add_to_new(*qg) -> List[Optional[Union[gr.Gallery, dict, List]]]:
 
 
 @optional_typecheck
-@trace
 def qg_add_to_latest(*qg) -> List[Optional[Union[gr.Gallery, dict]]]:
     """triggered by a shortcut, will add from clipboard the image to
     the latest non empty queued gallery"""
@@ -523,7 +511,6 @@ def create_audio_compo(**kwargs) -> gr.Microphone:
 
 
 @optional_typecheck
-@trace
 def roll_audio(*slots) -> List[Optional[Union[dict, str]]]:
     assert len(slots) > 1, f"invalid number of audio slots: {len(slots)}"
     assert isinstance(slots, tuple), f"unexpected slots type: {slots}"
@@ -618,7 +605,6 @@ tail = """
 </div>
 """
 
-@trace
 @optional_typecheck
 def update_audio_slots_txts(gui_enable_dirload: bool, *audio_slots_txts) -> List[Optional[str]]:
     """ran frequently to update the content of the textbox of each pending
