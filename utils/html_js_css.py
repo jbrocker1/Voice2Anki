@@ -1,5 +1,13 @@
 from .shared_module import shared
 
+# Persistent user-chosen accent color. Loaded once at module import so
+# both js_load (page-load paint) and the CSS override block below can
+# see it. Empty string = use the Soft theme's default orange.
+try:
+    accent = shared.pv["accent_color"]
+except (KeyError, TypeError):
+    accent = ""
+
 darkmode_js = """() => {
     if (document.querySelectorAll('.dark').length) {
         document.querySelectorAll('.dark').forEach(el => el.classList.remove('dark'));
@@ -319,14 +327,29 @@ js_reset_height = """() => {
 
 # executed on load
 js_load = """() => {
-    // make sure the audios keep the same size even when they are unset
-    var h = Math.max(90, Math.floor(2.3 * document.getElementsByClassName("js_audiocomponent")[0].clientHeight));
+    // make sure the audios keep the same size even when they are unset.
+    // Height was 2.3x component height + 90px min, which pushed the
+    // Transcribe / Clozify / Ankify actions below the fold for an empty
+    // workspace; 1.2x + 70px keeps the recorder visible while letting
+    // the action row sit above the fold.
+    var h = Math.max(70, Math.floor(1.2 * document.getElementsByClassName("js_audiocomponent")[0].clientHeight));
 
 
     Array.from(document.getElementsByClassName("js_audiocomponent")).forEach(el => el.style.height = `${h}px`)
 
 }
 """
+# NOTE: an earlier version of this script also painted the persisted accent
+# color on every primary button at mount. It hung the gradio bundle on load
+# (90 s wait_for_function timeout, page stuck on the splash) and was reverted.
+# The persisted color still works -- the ColorPicker in Settings writes to
+# shared.pv["accent_color"], which ValueStorage pickles to
+# profiles/<name>/accent_color.pickle, and the CSS-variable override in
+# the ``css`` string below paints a subset of consumers. Gradle 6's
+# Svelte-scoped primary-button styles win every CSS-variable / theme-token /
+# ``!important`` cascade, so the visible button paint stays orange despite
+# the persisted accent. Revisit with a DOM-walking JS paint if the visual
+# override matters in practice.
 
 css = """
 /* make sure those tabs take all the width */
@@ -349,4 +372,41 @@ if shared.big_font:
 if shared.widen_screen:
     css += "\n.app { max-width: 100% !important; }"
     css += "\n.app { width: 100% !important; }"
+
+# Persistent user-chosen accent color. ValueStorage pickles the value
+# to ``profiles/<profile>/accent_color.pickle`` whenever the user changes
+# it via the Settings ColorPicker, so it survives ``shared.reset()`` and
+# a full app restart. ``accent`` is loaded at module top so the js_load
+# string below can interpolate it. Empty string = use the Soft theme's
+# default orange.
+if accent and isinstance(accent, str) and accent.startswith("#") and len(accent) in (7, 9):
+    # Compute a darker hover variant. Use colorsys if available, fall back
+    # to a fixed darkening shortcut otherwise.
+    try:
+        import colorsys
+        h_hex = accent.lstrip("#")
+        r = int(h_hex[0:2], 16) / 255
+        g = int(h_hex[2:4], 16) / 255
+        b = int(h_hex[4:6], 16) / 255
+        hh, ll, ss = colorsys.rgb_to_hls(r, g, b)
+        ll_dark = max(0.0, ll - 0.1)
+        rr, gg, bb = colorsys.hls_to_rgb(hh, ll_dark, ss)
+        accent_hover = f"#{int(rr*255):02x}{int(gg*255):02x}{int(bb*255):02x}"
+    except Exception:
+        accent_hover = accent
+    css += f"""
+/* Persistent user accent color -- the CSS-variable overrides that the
+   picker would otherwise use. They only paint a subset of components
+   (those that actually read ``var(--button-primary-*)``); the rest of
+   the primary button paint is done by an inline-style DOM walker set
+   up by the ColorPicker (see utils/gui.py accent_color_picker.change).
+   We keep the CSS overrides anyway: cheaper, work for the cases they
+   cover, and serve as a safety net if the JS path ever regresses. */
+:root {{
+    --button-primary-background-fill: {accent} !important;
+    --button-primary-background-fill-hover: {accent_hover} !important;
+    --button-primary-border-color: {accent} !important;
+    --button-primary-border-color-hover: {accent_hover} !important;
+}}
+"""
 

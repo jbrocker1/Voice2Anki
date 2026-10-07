@@ -195,6 +195,92 @@ with gr.Blocks(
                 check_enable_flagging = gr.Checkbox(value=shared.pv["enable_flagging"], interactive=True, label="Flagging", show_label=True)
             with gr.Row():
                 txt_profile = gr.Dropdown(value=shared.pv.profile_name, label="V2A profile", choices=get_profiles(), multiselect=False, allow_custom_value=True)
+            with gr.Row():
+                # Custom accent color. Picked value is persisted via
+                # ``shared.pv["accent_color"]`` (profile pickle) so it
+                # survives ``shared.reset()`` and a full app restart. The
+                # JS handler below additionally paints primary buttons
+                # inline-style so the picked color reaches components that
+                # are Svelte-scoped inside gradio 6 (their CSS wins the
+                # cascade against :root / theme.set / !important). The
+                # inline paint reads ``window.__accentColor`` (set at the
+                # top of the JS handler) so the MutationObserver picks up
+                # the latest pick -- not the first one (oracle H3/H4).
+                accent_color_picker = gr.ColorPicker(
+                    value=shared.pv["accent_color"],
+                    label="Accent color",
+                    info="Pick a hex color (e.g. #7c3aed). Persists across restarts. Replaces the orange used for primary buttons.",
+                    elem_id="js_accentcolorpicker",
+                )
+
+                def _save_accent_color(c):
+                    """Persist the picked color via ValueStorage's standard
+                    __setitem__ path (which schedules a background pickle
+                    write to ``profiles/<name>/accent_color.pickle``). Returns
+                    c so the ColorPicker shows the new value. ``c or ""``
+                    defends against the picker firing ``None`` on first
+                    mount (oracle M11) so we never pickle the literal
+                    string ``"None"`` into the profile.
+                    """
+                    shared.pv["accent_color"] = c or ""
+                    return c
+                accent_color_picker.change(
+                    fn=_save_accent_color,
+                    inputs=[accent_color_picker],
+                    outputs=[accent_color_picker],
+                    show_progress=False,
+                )
+                accent_color_picker.change(
+                    fn=None,
+                    inputs=[accent_color_picker],
+                    js="""
+                    (c) => {
+                        if (!c) return;
+                        // ORACLE H3 fix: paint used to close over this
+                        // arrow's ``c``, so picking a second color left the
+                        // MutationObserver (installed once, on the first
+                        // pick) repainting the OLD color. Now we store the
+                        // latest color in a global and have paint read it.
+                        window.__accentColor = c;
+                        const set = (el, color) => {
+                            if (!el || !el.style) return;
+                            el.style.setProperty('background-color', color, 'important');
+                            el.style.setProperty('border-color', color, 'important');
+                            if (el.tagName === 'BUTTON' || el.classList && el.classList.contains('tabitem')) {
+                                el.style.setProperty('color', '#fff', 'important');
+                            }
+                        };
+                        const paint = () => {
+                            const color = window.__accentColor || c;
+                            document.querySelectorAll(
+                                'button.primary, button[class*="primary"], .primary, [role="button"][class*="primary"]'
+                            ).forEach(el => set(el, color));
+                            document.querySelectorAll(
+                                '.tab-nav button.selected, [role="tab"][aria-selected="true"]'
+                            ).forEach(el => set(el, color));
+                            document.querySelectorAll(
+                                'input[type="checkbox"]:checked + span, label.checked, [data-testid="checkbox"]'
+                            ).forEach(el => set(el, color));
+                        };
+                        paint();
+                        // ORACLE H4 fix: the previous paint was zero-arg
+                        // and ignored any argument. ``color`` now reads
+                        // from the global above so the function signature
+                        // doesn't matter.
+                        window.__accentPaint = paint;
+                        // Watch for new buttons mounted later. Only
+                        // installs once across color changes -- ``paint``
+                        // reads ``window.__accentColor`` on every callback.
+                        if (!window.__accentObserver) {
+                            window.__accentObserver = new MutationObserver(paint);
+                            window.__accentObserver.observe(
+                                document.body, { childList: true, subtree: true }
+                            );
+                        }
+                    }
+                    """,
+                    show_progress=False,
+                )
 
         with gr.Tab(label="Anki", elem_id="js_widetabs", elem_classes=["js_subtab_settings"]):
             with gr.Row():

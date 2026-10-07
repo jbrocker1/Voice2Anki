@@ -241,6 +241,11 @@ class SharedModule:
         self.func_dir.mkdir(exist_ok=True)
         self.user_chains = None
         self.anki_notetype = None
+        # ORACLE M3: reload message_buffer from the new profile so a profile
+        # switch starts with the new profile's buffer (otherwise the old
+        # one's buffer survives and ``main.py:1636`` writes it into the new
+        # profile).
+        self.message_buffer = self.pv["message_buffer"]
 
         self.initialized += 1
         if self.initialized > 1:

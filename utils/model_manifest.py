@@ -75,10 +75,34 @@ LLM: Dict[str, dict] = {
         "chat_format": "chatml",
         "description": "Qwen2.5 7B Instruct Q4_K_M (local, better quality, needs 8GB+ RAM)",
     },
+    # Microsoft's instruction-tuned small model. Strong at structured output
+    # and following long, rule-heavy system prompts (the kind cloze extraction
+    # needs). Same memory class as the Qwen 3B but materially better at format
+    # compliance -- in particular, the multi-card `#####` separator behavior we
+    # added. GGUF conversion by bartowski (high-quality imatrix quant).
+    "local/phi-3.5-mini-instruct": {
+        "filename": "Phi-3.5-mini-instruct-Q4_K_M.gguf",
+        "url": f"{HF_PREFIX}/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf",
+        "size_mb": 2300,
+        "n_ctx": 16384,
+        "max_input_tokens": 16384,
+        # bartowski's GGUF conversion was built so llama.cpp renders the
+        # Phi-3.5 chat template via the built-in "chatml" chat format
+        # (Phi-3.5 was trained on a ChatML-compatible template). The bare
+        # "phi-3" chat format string is not a valid llama-cpp-python name
+        # and silently falls back to raw templating.
+        "chat_format": "chatml",
+        "description": "Microsoft Phi-3.5 mini Instruct Q4_K_M (local, tuned for instruction following and structured output)",
+    },
 }
-#: what setup_env.py prefetches. The 7B is opt-in so a first install stays ~2 GB.
-DEFAULT_LLM = "local/qwen2.5-3b-instruct"
-PREFETCH_LLM = DEFAULT_LLM
+#: what setup_env.py prefetches. Phi-3.5-mini is now the default: in our
+#: 5-fixture end-to-end harness it produced 4/5 PASS (vs Qwen 3B at 3/5)
+#: and crucially passed the MIT OCW lecture opening that Qwen 3B failed
+#: (Qwen echoed the prompt; Phi-3.5 produced a structured answer).
+#: Same memory class (~2.2 GB Q4_K_M vs Qwen's 1.85 GB), but materially
+#: better at following the cloze-format instructions in long transcripts.
+PREFETCH_LLM = "local/phi-3.5-mini-instruct"
+DEFAULT_LLM = PREFETCH_LLM
 
 
 def models_root() -> Path:

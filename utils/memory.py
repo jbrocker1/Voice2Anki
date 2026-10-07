@@ -47,6 +47,13 @@ TRANSCRIPT
 
 litellm.set_verbose = shared.debug
 
+# "Keep cards short" rule was removed from default_system_prompt below:
+# it pushed Phi-3.5-mini to produce prose-with-numbered-lists instead of
+# cloze format on fixtures it previously handled fine (Bartonella regressed).
+# The post-processing cap in utils/main.py (max_chars_per_card=1500) is the
+# safety net. Re-enable the brevity rule in default_system_prompt when the
+# model is upgraded.
+
 default_system_prompt = {
             "role": "system",
             "content": """
@@ -55,7 +62,7 @@ You are my excellent assistant Alfred. Your task today is the to transform audio
 <rules>
 - Often the transcribed text will contain mistakes because it couldn't parse technical words, correct those mistakes.
 - If you have to create several flashcards from one transcript, separate them with a line containing "#####". They are not reviewed in the same order so keep the whole context present in each.
-- Don't create several cards on your own, only if I explicitely ask you to.
+- Create as many cards as the transcript naturally supports. Each card should isolate a single, distinct, memorable fact. Each card must stand on its own -- a learner reviewing card 3 has not seen cards 1 and 2. Do not pad with filler cards; one good card per real fact is better than three cards restating the same idea.
 - If the question implies giving a choice, order the choice by alphabetical order to make sure I don't memorize by heuristics.
 - Throughout this conversation, you will see plenty of examples so be sure to match the format, structure and formulation of the previous examples when replying. This is critical.
 - As long as I don't tell you that your answer is bad, that means your reply was perfect so keep doing the format you used before.
@@ -263,6 +270,14 @@ SEED_EXAMPLES = [
         "Mitochondria produce ATP through oxidative phosphorylation in the inner membrane.",
         "Mitochondria produce {{c1::ATP}} through oxidative phosphorylation in the inner membrane.",
     ),
+    # Multi-card example: one audio clip with two distinct facts yields two cards,
+    # each self-contained and separated by #####.
+    (
+        "You are studying pharmacology.\n"
+        "Beta-1 adrenergic receptors are found primarily in cardiac tissue and increase heart rate when stimulated. Beta-2 receptors are found in bronchial smooth muscle and cause bronchodilation.",
+        "Beta-1 adrenergic receptors are found primarily in {{c1::cardiac tissue}} and increase heart rate when stimulated.\n#####\n"
+        "Beta-2 receptors are found in {{c1::bronchial smooth muscle}} and cause {{c2::bronchodilation}}.",
+    ),
 ]
 
 
@@ -368,8 +383,16 @@ def prompt_filter(
                 min_sim[1] = pr["content"]
 
         # scale from 0 to 1
+        span = max_sim[0] - min_sim[0]
         for i, pr in enumerate(candidate_prompts):
-            candidate_prompts[i]["kw_score"] = (candidate_prompts[i]["kw_score"] - min_sim[0]) / (max_sim[0] - min_sim[0])
+            if span:
+                candidate_prompts[i]["kw_score"] = (candidate_prompts[i]["kw_score"] - min_sim[0]) / span
+            else:
+                # ORACLE H2: every keyword score is identical (all 0 by default)
+                # -- a 0/0 divide would crash prompt_filter and the whole alfred
+                # call. Default to 0: no keyword match signal, ties break by
+                # the other metrics downstream.
+                candidate_prompts[i]["kw_score"] = 0.0
     else:
         for i, pr in enumerate(candidate_prompts):
             candidate_prompts[i]["kw_score"] = 1
@@ -599,11 +622,32 @@ def recur_improv(txt_profile: str, txt_audio: str, txt_whisp_prompt: str, txt_ch
 
         prev_prompts = check_prompts(prev_prompts, less_verbose=True)
 
-        if "{{c1::" not in txt_chatgpt_outputstr and "}}" not in txt_chatgpt_outputstr:
+        # ORACLE M14: was ``and`` -- the warning only fires when BOTH a cloze
+        # opener and a closer are missing. Should be ``or`` so a half-formed
+        # cloze (e.g. missing the closing ``}}``) also raises the warning.
+        if "{{c1::" not in txt_chatgpt_outputstr or "}}" not in txt_chatgpt_outputstr:
             gr.Warning(red(f"No cloze found in new memory. Make sure it's on purpose.\nCard: {txt_chatgpt_outputstr}"))
 
-        with open(f"profiles/{txt_profile}/memories.json", "w") as f:
-            json.dump(prev_prompts, f, indent=4, ensure_ascii=False)
+        # ORACLE M15: was a non-atomic ``open("w")`` -- a crash mid-write left
+        # ``memories.json`` truncated to 0 bytes (the warning below at :632 was
+        # caught by the outer ``except``, but the file on disk was already
+        # destroyed). ``txt_profile`` was also interpolated into the path
+        # unvalidated (profile.txt_profile under ``check_prompts``). Write to a
+        # sibling ``.tmp`` and ``Path.replace`` -- atomic on POSIX & NTFS, and
+        # the existing memory entries are preserved on failure.
+        try:
+            mem_path = Path(f"profiles/{txt_profile}/memories.json")
+            tmp_path = mem_path.with_name(mem_path.name + ".tmp")
+            with open(str(tmp_path), "w", encoding="utf-8") as f:
+                json.dump(prev_prompts, f, indent=4, ensure_ascii=False)
+            tmp_path.replace(mem_path)
+        except Exception as err:
+            if "tmp_path" in locals() and tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+            raise Exception(red(f"Error during recursive improvement: '{err}'"))
         # with open(f"profiles/{txt_profile}/memories.toml", "w") as f:
         #     rtoml.dump(prev_prompts, f, pretty=True, none_value=RTOML_NONEVALUE)
     except Exception as err:
@@ -640,6 +684,13 @@ def load_prev_prompts(profile: str) -> List[dict]:
         abs_path = mem_file.resolve().absolute().__str__()
         modtime = mem_file.stat().st_mtime
         prev_prompts=cached_load_memories(path=abs_path, modtime=modtime)
+
+        # Older builds (or hand-edited files) may be missing the "role" key.
+        # Backfill in memory so check_prompts() and the few-shot builder don't
+        # see a half-formed entry. We don't rewrite the file: the next write
+        # from recur_improv() will produce a clean copy on its own.
+        for mem in prev_prompts:
+            mem.setdefault("role", "user")
 
         # with open(f"profiles/{profile}/memories.json", "r") as f:
         #     prev_prompts = json.load(f)
@@ -709,10 +760,9 @@ def get_memories_df(profile: str) -> pd.DataFrame:
         return pd.DataFrame()
     for i in range(len(memories)):
         memories[i]["n"] = i + 1
-        if "role" in memories[i]:
-            del memories[i]["role"]
-        else:
-            red(f"Role not found in memory: '{memories[i]}'")
+        # role is always present: load_prev_prompts backfills it. .pop keeps
+        # the column out of the dataframe the user sees in the Memories tab.
+        memories[i].pop("role", None)
     return pd.DataFrame(memories).reset_index().set_index("n")
 
 @optional_typecheck

@@ -1405,7 +1405,13 @@ def to_anki(
         audio_mp3_oname = audio_mp3_1["orig_name"]
         assert Path(audio_mp3_1["path"]).exists(), f"Not found: {audio_mp3_1['path']}"
     else:
-        audio_mp3_oname = audio_mp3_1
+        # ORACLE H10: was ``audio_mp3_oname = audio_mp3_1`` -- when the audio
+        # arrives as a plain string (e.g. after ``roll_audio``, which sets
+        # ``"value": s.get("path")``) this is the full path, so the three
+        # ``str.endswith(audio_mp3_oname)`` fallbacks at :1465-1466 miss and
+        # the assert at :1466 kills the Ankify with a confusing dump of
+        # temp paths. Compare basenames.
+        audio_mp3_oname = Path(audio_mp3_1).name
 
     # checks clozes validity
     clozes = [c.strip() for c in clozetext.split("#####") if c.strip()]
@@ -1461,6 +1467,11 @@ def to_anki(
     results = []
 
     # mention in the metadata the original mp3 name
+    # ORACLE H10: ``audio_row`` was only bound inside this branch, so a
+    # background dirload thread inserting a row between this check and
+    # the second one at :1508 could trigger ``NameError: audio_row`` later.
+    # Default to ``None``; guard the two later uses at :1508 and :1540.
+    audio_row = None
     if not shared.dirload_queue.empty:
         audio_row = shared.dirload_queue.loc[shared.dirload_queue["temp_path"].str.endswith(audio_mp3_oname)==True]
         if audio_row.empty:
@@ -1505,7 +1516,10 @@ def to_anki(
     else:
         txt_extra_source = txt_extra_source.strip()
 
-    if not shared.dirload_queue.empty:
+    # ORACLE H10: ``audio_row`` may still be ``None`` if no dirload row was
+    # found the first time around. Defaulted at the first dirload check
+    # above; guard so we never call ``.loc[:, ...]`` on ``None``.
+    if audio_row is not None and not shared.dirload_queue.empty():
         with shared.dirload_lock:
             audio_row.loc[:, "ankified"] = "started"
 
@@ -1537,7 +1551,10 @@ def to_anki(
     if not len(results) == len(clozes):
         gather_threads(["audio_to_anki", "ocr"])
         raise Exception(red(f"Some flashcards were not added:{','.join(errors)}"))
-    if not shared.dirload_queue.empty:
+    # ORACLE H10: same guard as the "started" branch above. Done in two
+    # places because Anki might fail before this point, and we still want
+    # the "ankified=True" row stamp on success.
+    if audio_row is not None and not shared.dirload_queue.empty():
         with shared.dirload_lock:
             audio_row.loc[:, "ankified"] = True
 

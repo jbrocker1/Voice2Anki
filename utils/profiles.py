@@ -30,6 +30,25 @@ profile_keys = {
     "enable_flagging": {"default": False, "type": bool},
     "enable_dirload": {"default": False, "type": bool},
     "dirload_check": {"default": False},
+    # Upper bound on cards the LLM may emit from a single audio. The system
+    # prompt now tells the LLM to produce as many cards as the transcript
+    # warrants (separated by #####); this cap prevents a runaway output.
+    # Set to 0 to disable the cap.
+    "max_cards_per_audio": {"default": 5, "type": int},
+    # Hard cap on each individual card's character length (total of
+    # everything between ##### separators, including the cloze markers
+    # themselves). Cards longer than this get hard-truncated at sentence
+    # boundaries before they reach to_anki. Default 1500 = a pragmatic
+    # upper-bound safety net that catches only truly egregious output
+    # without interfering with normal Phi-3.5 / Qwen cards. The librarian's
+    # tiered rubric was 150 (target) / 300 (acceptable) / 1000 (hard
+    # fail), but a 300-char cap broke Bartonella's natural cloze output.
+    "max_chars_per_card": {"default": 1500, "type": int},
+    # Custom accent color for primary buttons and UI highlights. Persists
+    # across restarts via the standard profile pickle. Empty string means
+    # "use the theme default" (gradio's Soft theme is orange by default).
+    # Valid values are CSS hex colors like "#7c3aed" or "#0ea5e9".
+    "accent_color": {"default": "#7c3aed", "type": str},
     "sld_max_tkn": {"default": 1300},
     "sld_buffer": {"default": 0},
     "sld_temp": {"default": 0.0, "type": float},
@@ -206,7 +225,14 @@ class ValueStorage:
                     with open(str(kf), "r") as f:
                         new = json.load(f)
                 except Exception as err:
+                    # ORACLE H7: a corrupt or non-JSON message_buffer.pickle
+                    # would otherwise fall through to the type-cast at :244
+                    # with ``new`` undefined and raise NameError, bricking
+                    # the app at import (main.py:43 reads message_buffer
+                    # during module load). Default to ``[]`` -- that's the
+                    # correct empty value for this key.
                     red(f"Error when loading message_buffer as json in pickle: '{err}'")
+                    new = []
 
             else:
                 try:
@@ -226,7 +252,16 @@ class ValueStorage:
             self.cache_values[key] = new
             return new
         else:
-            self.cache_values[key] = profile_keys[key]["default"]
+            # ORACLE M1: was ``return self.cache_values[key]`` (which is
+            # ``profile_keys[key]["default"]`` -- a single shared object).
+            # Callers that mutate the returned value (e.g. main.py:43 aliases
+            # ``message_buffer`` then ``:1613/:1624`` ``.append()`` it in
+            # place) pollute the module-level default across profiles and
+            # cause the first buffer entry never to be persisted
+            # (``item is default`` -> ``__setitem__`` takes the
+            # delete-the-file branch at :284). Return a deep copy.
+            import copy as _copy
+            self.cache_values[key] = _copy.deepcopy(profile_keys[key]["default"])
             return self.cache_values[key]
 
     def __setitem__(self, key: str, item: Any) -> None:
@@ -318,22 +353,45 @@ def worker_setitem(in_queues: dict) -> None:
                 continue
 
             if key == "message_buffer":
+                # ORACLE H6: was ``open("w")`` which (i) ``kf.unlink``s
+                # then truncates and (ii) ``json.dump`` would fail for any
+                # non-utf8 default because the rest of the file is "w"
+                # text. A crash mid-write left a 0-byte pickle which the
+                # next import can't recover from (``main.py:43`` reads
+                # message_buffer at module load). Write to a .tmp sibling and
+                # ``Path.replace`` for an atomic swap that survives crashes
+                # mid-write.
+                tmp = kf.with_name(kf.name + ".tmp")
                 try:
-                    with open(str(kf), "w") as f:
+                    with open(str(tmp), "w", encoding="utf-8") as f:
                         json.dump(item, f, indent=4, ensure_ascii=False)
+                    tmp.replace(kf)
                 except Exception as err:
+                    if tmp.exists():
+                        try:
+                            tmp.unlink()
+                        except Exception:
+                            pass
                     red(f"Error when saving message_buffer as json for key {key} in pickle: '{err}'")
             else:
+                tmp = kf.with_name(kf.name + ".tmp")
                 try:
-                    with open(str(kf), "w") as f:
+                    # ORACLE H6: ``open("w")`` (text mode) before ``pickle.dump``
+                    # raises ``TypeError: write() argument must be str, not
+                    # bytes`` -- which the prior except ``open("w")`` path
+                    # would also truncate the existing file to 0 bytes, before
+                    # falling back to ``"wb"``. Atomic .tmp + replace avoids
+                    # that window entirely.
+                    with open(str(tmp), "wb") as f:
                         pickle.dump(item, f)
-                except Exception:
-                    try:
-                        # try as binary
-                        with open(str(kf), "wb") as f:
-                            pickle.dump(item, f)
-                    except Exception as err:
-                        red(f"Error when setting {kf}: '{err}'")
+                    tmp.replace(kf)
+                except Exception as err:
+                    if tmp.exists():
+                        try:
+                            tmp.unlink()
+                        except Exception:
+                            pass
+                    red(f"Error when setting {kf}: '{err}'")
 
 
 @optional_typecheck
@@ -403,6 +461,14 @@ def switch_profile(profile: str) -> Tuple[
                 profile,
                 ]
 
+    # ORACLE C2: ``ValueStorage.__new__`` raises ``"Tried to create
+    # another instance of ValueStorage"`` whenever it finds a stale
+    # ``_instance``. The singleton is set at import time by utils.main, so
+    # any non-default ``ValueStorage(profile)`` here fails -- silently
+    # dropping the user onto a profile that the GUI dropdown still claims
+    # is the new one (alfred reads the new profile's memories, settings
+    # write to the old profile). Clear the singleton so this works.
+    ValueStorage._instance = None
     shared.pv = ValueStorage(profile)
 
     # reset the fields to the previous values of profile

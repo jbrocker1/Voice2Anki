@@ -342,6 +342,15 @@ def smartcache(func: Callable) -> Callable:
         for k in sorted(kwargs2.keys()):
             kwargs_sorted[k] = kwargs2[k]
 
+        # ORACLE C1 FIX: build a SECOND sorted dict from the *unsorted* full
+        # kwargs for the actual invocation -- ``kwargs_sorted`` above has
+        # the joblib-``ignore`` entries stripped, and using it as the call
+        # dict means e.g. ``audio_edit`` (which passes ``audio_path=`` to
+        # ``whisper_cached``, decorated ``@stt_cache.cache(ignore=["audio_path"])``)
+        # silently loses that kwarg and raises ``ValueError: Wrong number of
+        # arguments``. Hash with the stripped dict; call with the full set.
+        kwargs_full_sorted = {k: kwargs[k] for k in sorted(kwargs.keys())}
+
         fstr = str(f)
 
         to_hash = [inspect.getsource(f), fstr]
@@ -371,9 +380,9 @@ def smartcache(func: Callable) -> Callable:
                     shared.smartcache[h] = time.time()
             try:
                 if args:
-                    result = func(*args, **kwargs_sorted)
+                    result = func(*args, **kwargs_full_sorted)
                 else:
-                    result = func(**kwargs_sorted)
+                    result = func(**kwargs_full_sorted)
             except:
                 with shared.thread_lock:
                     with shared.timeout_lock:
